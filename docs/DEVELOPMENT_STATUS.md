@@ -7,8 +7,8 @@ Updated: 2026-10-18
 - Active milestone: M2 — Android-native QEMU integration investigation.
 - Active development branch: `feat/m1-linux-boot`.
 - Pull request: [#1 — M1: Start Alpine ARM64 guest image builder](https://github.com/ibrahim1101/PocketOS/pull/1) (open).
-- Latest verified code revision: `e242b6f614f1100000b49a48c7a23896b35f1b0e`.
-- CI run [#86](https://github.com/ibrahim1101/PocketOS/actions/runs/39148824913) passed Android unit tests, APK assembly, JNI instrumentation on an x86_64 emulator, ELF ABI checks for both packaged native libraries, and all Alpine ARM64 guest checks: serial boot, Linux shell commands, ext4 persistence across a fresh QEMU process, and localhost HTTP forwarding. The HTTP test served a response from BusyBox `httpd` in the guest through host `127.0.0.1:18080` to guest port 8080.
+- Latest verified code revision: `c1696d93321bb4839872bb5f9c352918e09b260d`.
+- CI run [#89](https://github.com/ibrahim1101/PocketOS/actions/runs/39149290545) passed Android unit tests, APK assembly, JNI instrumentation on an x86_64 emulator, ELF ABI checks for both packaged native libraries, and all Alpine ARM64 guest checks: serial boot, Linux shell commands, ext4 persistence across a fresh QEMU process, and localhost HTTP forwarding. The HTTP test confirmed QEMU listens only on host `127.0.0.1:18080` and serves the expected response from guest port 8080.
 - The instrumentation test installed the app and test APK on the emulator and confirmed the embedded native library loads and returns `JNI_BRIDGE_READY;QEMU_NOT_LINKED`. This validates the JNI packaging boundary only; it does not run QEMU.
 - The APK audit extracts the JNI libraries and confirms their ELF machines are `AArch64` and `Advanced Micro Devices X86-64`.
 - CI built the ext4 image, extracted the matching kernel and initramfs, booted them with system QEMU, mounted the VirtIO ext4 disk, and observed the `pocketos login:` prompt on PL011 serial.
@@ -30,7 +30,7 @@ Updated: 2026-10-18
 - CI starts Alpine's `busybox-extras httpd` inside the guest after bringing up `eth0` and obtaining a DHCP lease, then verifies the exact HTTP response through a QEMU host forward bound to `127.0.0.1`.
 - CI checks shell syntax and ShellCheck, builds the guest image, boots it under AArch64 system emulation to a serial login prompt, then runs `uname -s` and reads the Alpine release from a temporary test shell.
 - CI remounts the guest disk read-write, writes a marker, powers Alpine off, starts a fresh QEMU process on the same ext4 disk, verifies the marker, then removes it.
-- CI starts a real Alpine guest HTTP server and verifies its exact response through localhost-only QEMU host forwarding.
+- CI starts a real Alpine guest HTTP server, verifies the forwarded listener is bound only to `127.0.0.1`, and checks the exact HTTP response.
 - Android CI provisions Gradle 8.9 because the repository has no Gradle wrapper.
 
 ## Outstanding gaps
