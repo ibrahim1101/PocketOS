@@ -87,7 +87,7 @@ jobs:
           bash -n scripts/*.sh
           shellcheck scripts/*.sh
       - name: Check Python guest probe syntax
-        run: python3 -m py_compile scripts/check-guest-shell.py scripts/check-guest-persistence.py
+        run: python3 -m py_compile scripts/check-guest-shell.py scripts/check-guest-persistence.py scripts/check-guest-http.py
       - name: Build an ARM64 Alpine disk
         run: SIZE_MB=512 bash scripts/build-alpine-rootfs.sh "$RUNNER_TEMP/alpine-aarch64.ext4"
       - name: Extract Alpine's QEMU virtual kernel
@@ -111,6 +111,13 @@ jobs:
       - name: Verify guest disk persistence across restart
         run: >-
           python3 scripts/check-guest-persistence.py
+          --kernel "$RUNNER_TEMP/vmlinuz-virt"
+          --initramfs "$RUNNER_TEMP/initramfs-virt"
+          --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
+          --timeout 120
+      - name: Verify localhost HTTP forwarding from guest
+        run: >-
+          python3 scripts/check-guest-http.py
           --kernel "$RUNNER_TEMP/vmlinuz-virt"
           --initramfs "$RUNNER_TEMP/initramfs-virt"
           --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
