@@ -81,6 +81,34 @@ def read_until(
                 buffer.extend(chunk)
 
 
+def read_status_line(
+    process: subprocess.Popen[bytes],
+    master_fd: int,
+    buffer: bytearray,
+    marker: bytes,
+    deadline: float,
+) -> str:
+    while True:
+        start = buffer.find(marker)
+        if start >= 0:
+            line_start = start + len(marker)
+            line_end = buffer.find(b"\\n", line_start)
+            if line_end >= 0:
+                return buffer[line_start:line_end].rstrip(b"\\r").decode("ascii")
+        if process.poll() is not None:
+            raise RuntimeError(f"QEMU exited with status {process.returncode}")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"guest did not finish status marker {marker!r}")
+        ready, _, _ = select.select([master_fd], [], [], 0.2)
+        if ready:
+            try:
+                chunk = os.read(master_fd, 8192)
+            except BlockingIOError:
+                continue
+            if chunk:
+                buffer.extend(chunk)
+
+
 def send_checked(
     process: subprocess.Popen[bytes],
     master_fd: int,
@@ -98,10 +126,9 @@ def send_checked(
     )
     os.write(master_fd, payload.encode())
     status_marker = success + b":"
-    read_until(
-        process, master_fd, buffer, (status_marker,), time.monotonic() + timeout
+    output = read_status_line(
+        process, master_fd, buffer, status_marker, time.monotonic() + timeout
     )
-    output = buffer.split(status_marker, 1)[1].splitlines()[0].decode("ascii")
     if output.strip() != "0":
         raise RuntimeError(f"guest setup command failed with status {output}: {command}")
 
