@@ -8,19 +8,23 @@ import pty
 import select
 import subprocess
 import sys
+import termios
 import time
 import urllib.error
 import urllib.request
 
 HOST_PORT = 18080
 GUEST_PORT = 8080
-HTTP_BODY = b"PocketOS HTTP forwarding works\n"
+HTTP_BODY = b"PocketOS HTTP forwarding works\\n"
 SHELL_PROMPT = b"~ # "
-READY_MARKER = b"__POCKETOS_HTTP_SERVER_STARTED__"
+SERVER_STARTED = b"__POCKETOS_HTTP_SERVER_STARTED__"
 
 
 def launch(kernel: str, initramfs: str, rootfs: str) -> tuple[subprocess.Popen[bytes], int]:
     master_fd, slave_fd = pty.openpty()
+    terminal_settings = termios.tcgetattr(slave_fd)
+    terminal_settings[3] &= ~termios.ECHO
+    termios.tcsetattr(slave_fd, termios.TCSANOW, terminal_settings)
     command = [
         "qemu-system-aarch64",
         "-machine", "virt",
@@ -56,14 +60,17 @@ def read_until(
     process: subprocess.Popen[bytes],
     master_fd: int,
     buffer: bytearray,
-    token: bytes,
+    tokens: tuple[bytes, ...],
     deadline: float,
-) -> None:
-    while token not in buffer:
+) -> bytes:
+    while True:
+        for token in tokens:
+            if token in buffer:
+                return token
         if process.poll() is not None:
-            raise RuntimeError(f"QEMU exited with status {process.returncode} before {token.decode()}")
+            raise RuntimeError(f"QEMU exited with status {process.returncode}")
         if time.monotonic() >= deadline:
-            raise TimeoutError(f"guest did not emit {token.decode()} before timeout")
+            raise TimeoutError(f"guest did not emit any expected marker: {tokens!r}")
         ready, _, _ = select.select([master_fd], [], [], 0.2)
         if ready:
             try:
@@ -72,6 +79,24 @@ def read_until(
                 continue
             if chunk:
                 buffer.extend(chunk)
+
+
+def send_checked(
+    process: subprocess.Popen[bytes],
+    master_fd: int,
+    buffer: bytearray,
+    command: str,
+    success: bytes,
+    timeout: int,
+) -> None:
+    failure = b"__POCKETOS_GUEST_COMMAND_FAILED__"
+    payload = f"if {command}; then echo {success.decode()}; else echo {failure.decode()}; fi\\n"
+    os.write(master_fd, payload.encode())
+    observed = read_until(
+        process, master_fd, buffer, (success, failure), time.monotonic() + timeout
+    )
+    if observed == failure:
+        raise RuntimeError(f"guest setup command failed: {command}")
 
 
 def stop(process: subprocess.Popen[bytes], master_fd: int) -> None:
@@ -104,17 +129,26 @@ def main() -> int:
     process, master_fd = launch(args.kernel, args.initramfs, args.rootfs)
     buffer = bytearray()
     try:
-        read_until(process, master_fd, buffer, SHELL_PROMPT, time.monotonic() + args.timeout)
-        setup = (
+        read_until(process, master_fd, buffer, (SHELL_PROMPT,), time.monotonic() + args.timeout)
+        send_checked(
+            process, master_fd, buffer,
             "mount -o remount,rw / && mkdir -p /tmp/pocketos-www "
-            "&& printf 'PocketOS HTTP forwarding works\\n' > /tmp/pocketos-www/index.html "
-            "&& udhcpc -n -q -t 5 -T 1 -i eth0 "
-            "&& busybox httpd -f -p 0.0.0.0:8080 -h /tmp/pocketos-www "
+            "&& printf 'PocketOS HTTP forwarding works\\\\n' > /tmp/pocketos-www/index.html",
+            b"__POCKETOS_HTTP_CONTENT_READY__", args.timeout,
+        )
+        send_checked(
+            process, master_fd, buffer,
+            "udhcpc -n -q -t 5 -T 1 -i eth0",
+            b"__POCKETOS_DHCP_READY__", args.timeout,
+        )
+
+        start_server = (
+            "busybox httpd -f -p 8080 -h /tmp/pocketos-www "
             ">/tmp/pocketos-httpd.log 2>&1 & "
-            f"sleep 1; echo {READY_MARKER.decode()}\n"
-        ).encode()
-        os.write(master_fd, setup)
-        read_until(process, master_fd, buffer, READY_MARKER, time.monotonic() + args.timeout)
+            "echo $! >/tmp/pocketos-httpd.pid; sleep 1; "
+            "kill -0 \"$(cat /tmp/pocketos-httpd.pid)\""
+        )
+        send_checked(process, master_fd, buffer, start_server, SERVER_STARTED, args.timeout)
 
         deadline = time.monotonic() + min(args.timeout, 45)
         last_error: Exception | None = None
