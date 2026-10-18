@@ -22,7 +22,7 @@ mkdir -p "$(dirname "$OUT")"
 OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 [[ ! -e "$OUT" ]] || { echo "Refusing to overwrite $OUT" >&2; exit 2; }
 echo "Building Alpine $ALPINE_TAG ARM64 disk ($SIZE_MB MiB)..."
-docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$ALPINE_REPOSITORY_BRANCH" -v "$(dirname "$OUT"):/output" -e OUTPUT_NAME="$(basename "$OUT")" "alpine:$ALPINE_TAG" sh -euc '
+docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$ALPINE_REPOSITORY_BRANCH" -e OUTPUT_UID="$(id -u)" -e OUTPUT_GID="$(id -g)" -v "$(dirname "$OUT"):/output" -e OUTPUT_NAME="$(basename "$OUT")" "alpine:$ALPINE_TAG" sh -euc '
   apk add --no-cache e2fsprogs
   mkdir -p /guest/etc/apk/keys /guest/etc/network /guest/etc/runlevels/default /guest/etc/runlevels/boot /guest/etc/runlevels/sysinit
   cp /etc/apk/keys/* /guest/etc/apk/keys/
@@ -39,6 +39,7 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   # Root login disabled by default: set a password offline before remote access.
   truncate -s "${SIZE_MB}M" "/output/$OUTPUT_NAME"
   mkfs.ext4 -q -F -d /guest "/output/$OUTPUT_NAME"
+  chown "$OUTPUT_UID:$OUTPUT_GID" "/output/$OUTPUT_NAME"
   chmod 644 "/output/$OUTPUT_NAME"
   echo "Guest disk created."
 '
