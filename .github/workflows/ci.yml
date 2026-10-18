@@ -40,6 +40,8 @@ jobs:
           export PATH="$sdk_root/platform-tools:$sdk_root/emulator:$PATH"
           export ANDROID_AVD_HOME="$HOME/.android/avd"
           mkdir -p "$ANDROID_AVD_HOME"
+          if [[ -e /dev/kvm ]]; then sudo chmod 666 /dev/kvm; fi
+          ls -l /dev/kvm || true
           echo "no" | "$sdk_root/cmdline-tools/latest/bin/avdmanager" create avd -n pocketos-ci -k "system-images;android-35;google_apis;x86_64" --device pixel_2 --force
           "$sdk_root/cmdline-tools/latest/bin/avdmanager" list avd
           "$sdk_root/emulator/emulator" -avd pocketos-ci -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -accel on > "$RUNNER_TEMP/emulator.log" 2>&1 &
