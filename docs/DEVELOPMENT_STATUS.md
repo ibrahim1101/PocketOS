@@ -7,8 +7,8 @@ Updated: 2026-10-18
 - Active milestone: M2 — Android-native QEMU integration investigation.
 - Active development branch: `feat/m1-linux-boot`.
 - Pull request: [#1 — M1: Start Alpine ARM64 guest image builder](https://github.com/ibrahim1101/PocketOS/pull/1) (open).
-- Latest verified code revision: `7285061399c0746e9a8c812cb3802449ec5a3669`.
-- CI run [#67](https://github.com/ibrahim1101/PocketOS/actions/runs/39145289175) passed Android unit tests, APK assembly, JNI instrumentation on an x86_64 emulator, ELF ABI checks for both packaged native libraries, and the Alpine ARM64 guest boot, command, and disk-persistence probes. Earlier runs [#59](https://github.com/ibrahim1101/PocketOS/actions/runs/39143983887) and [#60](https://github.com/ibrahim1101/PocketOS/actions/runs/39144008484) also passed their recorded Android and guest checks.
+- Latest verified code revision: `e242b6f614f1100000b49a48c7a23896b35f1b0e`.
+- CI run [#86](https://github.com/ibrahim1101/PocketOS/actions/runs/39148824913) passed Android unit tests, APK assembly, JNI instrumentation on an x86_64 emulator, ELF ABI checks for both packaged native libraries, and all Alpine ARM64 guest checks: serial boot, Linux shell commands, ext4 persistence across a fresh QEMU process, and localhost HTTP forwarding. The HTTP test served a response from BusyBox `httpd` in the guest through host `127.0.0.1:18080` to guest port 8080.
 - The instrumentation test installed the app and test APK on the emulator and confirmed the embedded native library loads and returns `JNI_BRIDGE_READY;QEMU_NOT_LINKED`. This validates the JNI packaging boundary only; it does not run QEMU.
 - The APK audit extracts the JNI libraries and confirms their ELF machines are `AArch64` and `Advanced Micro Devices X86-64`.
 - CI built the ext4 image, extracted the matching kernel and initramfs, booted them with system QEMU, mounted the VirtIO ext4 disk, and observed the `pocketos login:` prompt on PL011 serial.
@@ -27,15 +27,17 @@ Updated: 2026-10-18
 - Pure Kotlin session policy defines a 60-minute limit and a 20% battery threshold. Unit tests pass, but no service enforces the policy.
 - Alpine ARM64 builder seeds trusted APK keys and package repositories, installs Alpine base/OpenRC and `linux-virt`, creates matching modules/initramfs, then writes a 512 MiB ext4 disk by default.
 - Host QEMU harness supplies the Linux kernel, initramfs, ext4 root disk, and localhost-only port forwarding.
+- CI starts Alpine's `busybox-extras httpd` inside the guest after bringing up `eth0` and obtaining a DHCP lease, then verifies the exact HTTP response through a QEMU host forward bound to `127.0.0.1`.
 - CI checks shell syntax and ShellCheck, builds the guest image, boots it under AArch64 system emulation to a serial login prompt, then runs `uname -s` and reads the Alpine release from a temporary test shell.
 - CI remounts the guest disk read-write, writes a marker, powers Alpine off, starts a fresh QEMU process on the same ext4 disk, verifies the marker, then removes it.
+- CI starts a real Alpine guest HTTP server and verifies its exact response through localhost-only QEMU host forwarding.
 - Android CI provisions Gradle 8.9 because the repository has no Gradle wrapper.
 
 ## Outstanding gaps
 
 - No Android-compatible QEMU executable, native process supervisor, serial bridge, or integrated terminal exists. Android packaging constraints, the pinned Termux QEMU 11.1.2 compatibility reference, and the next JNI-native build proof gates are documented in [ANDROID_QEMU_INTEGRATION.md](ANDROID_QEMU_INTEGRATION.md).
 - Normal interactive login with a configured guest account and package installation remain unverified; only `uname -s` and reading `/etc/alpine-release` have been exercised in the temporary test shell.
-- Host-side CI verifies guest poweroff and ext4 persistence across a QEMU restart. Android VM process shutdown and localhost HTTP forwarding remain unverified.
+- Host-side CI verifies guest poweroff and ext4 persistence across a QEMU restart, plus localhost HTTP forwarding from a guest service. Android VM process shutdown and Android-side localhost forwarding remain unverified.
 - Android lifecycle, widget actions, timer enforcement, battery response, notifications, and recovery are not implemented.
 - Software-emulation performance and Android process restrictions have not been tested on a physical ARM64 device.
 
@@ -45,6 +47,7 @@ Updated: 2026-10-18
 - Rewrote image-size validation to satisfy ShellCheck.
 - Added APK repositories and trusted keys inside the guest root.
 - Replaced the unavailable `busybox-initscripts` package with Alpine's `busybox-openrc`.
+- Added Alpine `busybox-extras` because the base BusyBox build does not include `httpd`; raised the guest `eth0` interface before DHCP in the networking probe.
 - Added `linux-virt`, its initramfs, and `rootfstype=ext4` to the host boot path.
 - Assigned the generated disk to the invoking host user so QEMU can open it.
 - Added Android SDK tools to the emulator `PATH`, pinned `ANDROID_AVD_HOME`, and granted the hosted runner access to `/dev/kvm`.
@@ -56,4 +59,3 @@ Updated: 2026-10-18
 2. Prove a JNI entry point can start, supervise, and stop the QEMU main loop inside a dedicated Android process.
 3. Install on an ARM64 Android device and boot Alpine through the Android native engine.
 4. Add safe first-run guest account setup, then test interactive login and package installation; verify disk persistence through the Android VM lifecycle.
-5. Verify localhost HTTP forwarding from a real guest service.
