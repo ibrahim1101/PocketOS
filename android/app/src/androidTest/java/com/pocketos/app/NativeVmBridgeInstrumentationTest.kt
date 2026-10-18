@@ -2,6 +2,7 @@ package com.pocketos.app
 
 import android.content.ComponentName
 import java.io.File
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -18,25 +19,36 @@ class NativeVmBridgeInstrumentationTest {
     }
 
     @Test
-    fun packagedNativeExecutableCanRunFromInstalledLibraryDirectory() {
+    fun packagedNativeExecutableRunsThroughTheVmSupervisor() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val executable = File(context.applicationInfo.nativeLibraryDir, "libpocketos_exec_probe.so")
 
         assertTrue("Probe executable missing: ${executable.absolutePath}", executable.isFile)
         assertTrue("Probe is not executable: ${executable.absolutePath}", executable.canExecute())
 
-        val process = ProcessBuilder(executable.absolutePath)
-            .redirectErrorStream(true)
-            .start()
-        val completed = process.waitFor(10, TimeUnit.SECONDS)
-        if (!completed) {
-            process.destroyForcibly()
-        }
-        assertTrue("Packaged probe process did not exit", completed)
+        val output = StringBuilder()
+        val outputLock = Any()
+        val outputReady = CountDownLatch(1)
+        val supervisor = NativeProcessSupervisor()
+        val process = supervisor.start(
+            command = listOf(executable.absolutePath),
+            onSerialOutput = { chunk ->
+                synchronized(outputLock) {
+                    output.append(String(chunk, Charsets.UTF_8))
+                    if (output.contains("POCKETOS_EXEC_PROBE_OK")) {
+                        outputReady.countDown()
+                    }
+                }
+            },
+        )
 
-        val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
-        assertEquals(0, process.exitValue())
-        assertEquals("POCKETOS_EXEC_PROBE_OK", output)
+        assertTrue("Packaged probe process did not exit", process.awaitExit(10, TimeUnit.SECONDS))
+        assertTrue("Packaged probe output was not received", outputReady.await(2, TimeUnit.SECONDS))
+        assertEquals(0, process.exitCode)
+        synchronized(outputLock) {
+            assertEquals("POCKETOS_EXEC_PROBE_OK\n", output.toString())
+        }
+        assertTrue(!supervisor.isRunning())
     }
 
     @Test
