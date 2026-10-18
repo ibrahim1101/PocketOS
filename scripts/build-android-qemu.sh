@@ -212,9 +212,24 @@ compat_object="$build_root/pocketos-android-shm-compat.o"
 "$llvm_ar" rcs "$prefix/lib/libpocketos-android-compat.a" "$compat_object"
 
 export PATH="$wrappers:$PATH"
-export CFLAGS="-O2 -fPIE -D__BIONIC__=1 -I$prefix/include -include $script_dir/android-shm-compat.h"
+export CFLAGS="-O2 -fPIE -D__BIONIC__=1 -I$prefix/include -I$script_dir"
 export CXXFLAGS="-O2 -fPIE"
 export LDFLAGS="-pie -L$prefix/lib -Wl,--whole-archive -lpocketos-android-compat -Wl,--no-whole-archive"
+# Add the compatibility prototypes only to QEMU's POSIX shared-memory
+# implementation; Meson's function probes use their own prototypes.
+python3 - "$qemu_source/util/oslib-posix.c" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+text = source.read_text()
+needle = '#include "qemu/osdep.h"\n'
+replacement = needle + '#ifdef __BIONIC__\n#include "android-shm-compat.h"\n#endif\n'
+if text.count(needle) != 1:
+    raise SystemExit("QEMU oslib-posix.c include anchor changed")
+source.write_text(text.replace(needle, replacement))
+PY
+
 qemu_build="$build_root/qemu-build"
 mkdir -p "$qemu_build"
 (
