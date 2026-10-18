@@ -106,7 +106,7 @@ jobs:
           unzip -l "$apk" | grep -F "lib/arm64-v8a/libqemu-system-aarch64.so"
           unzip -l "$apk" | grep -F "assets/pocketos/vmlinuz-virt"
           unzip -l "$apk" | grep -F "assets/pocketos/initramfs-virt"
-          unzip -l "$apk" | grep -F "assets/pocketos/rootfs.ext4.gz"
+          unzip -l "$apk" | grep -F "assets/pocketos/rootfs.ext4.gzip"
           unzip -l "$apk" | grep -F "assets/pocketos/assets.sha256"
       - name: Run Android native bridge instrumentation tests
         run: |

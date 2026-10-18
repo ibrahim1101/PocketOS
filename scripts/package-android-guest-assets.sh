@@ -25,9 +25,9 @@ trap cleanup EXIT
 
 debugfs -R "dump /boot/vmlinuz-virt $stage/vmlinuz-virt" "$disk" >/dev/null
 debugfs -R "dump /boot/initramfs-virt $stage/initramfs-virt" "$disk" >/dev/null
-gzip -9 -n -c "$disk" > "$stage/rootfs.ext4.gz"
+gzip -9 -n -c "$disk" > "$stage/rootfs.ext4.gzip"
 
-for asset in vmlinuz-virt initramfs-virt rootfs.ext4.gz; do
+for asset in vmlinuz-virt initramfs-virt rootfs.ext4.gzip; do
   if [[ ! -s "$stage/$asset" ]]; then
     echo "Generated guest asset is empty: $asset" >&2
     exit 1
@@ -35,7 +35,7 @@ for asset in vmlinuz-virt initramfs-virt rootfs.ext4.gz; do
 done
 (
   cd "$stage"
-  sha256sum vmlinuz-virt initramfs-virt rootfs.ext4.gz > assets.sha256
+  sha256sum vmlinuz-virt initramfs-virt rootfs.ext4.gzip > assets.sha256
 )
 mv "$stage" "$output"
 trap - EXIT
