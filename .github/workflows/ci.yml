@@ -34,6 +34,8 @@ jobs:
           gradle-version: "8.9"
       - name: Start Android x86_64 emulator
         run: |
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$sdk_root/platform-tools:$sdk_root/emulator:$PATH"
           echo "no" | "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/avdmanager" create avd -n pocketos-ci -k "system-images;android-35;google_apis;x86_64" --device pixel_2 --force
           "${ANDROID_HOME:-/usr/local/lib/android/sdk}/emulator/emulator" -avd pocketos-ci -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -accel on > "$RUNNER_TEMP/emulator.log" 2>&1 &
           adb wait-for-device
