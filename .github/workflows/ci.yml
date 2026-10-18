@@ -51,9 +51,12 @@ jobs:
         run: SIZE_MB=512 bash scripts/build-alpine-rootfs.sh "$RUNNER_TEMP/alpine-aarch64.ext4"
       - name: Extract Alpine's QEMU virtual kernel
         run: debugfs -R "dump /boot/vmlinuz-virt $RUNNER_TEMP/vmlinuz-virt" "$RUNNER_TEMP/alpine-aarch64.ext4"
+      - name: Extract matching Alpine initramfs
+        run: debugfs -R "dump /boot/initramfs-virt $RUNNER_TEMP/initramfs-virt" "$RUNNER_TEMP/alpine-aarch64.ext4"
       - name: Boot guest to serial login prompt
         env:
           KERNEL: ${{ runner.temp }}/vmlinuz-virt
+          INITRAMFS: ${{ runner.temp }}/initramfs-virt
           ROOTFS: ${{ runner.temp }}/alpine-aarch64.ext4
           BOOT_TIMEOUT_SECONDS: "120"
         run: bash scripts/check-guest-boot.sh
