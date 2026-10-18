@@ -218,7 +218,6 @@ mkdir -p "$qemu_build"
     --host-cc="$(command -v cc)" \
     --cc="$cc" \
     --cxx="$cxx" \
-    --ar="$llvm_ar" \
     --target-list=aarch64-softmmu \
     --disable-werror \
     --disable-docs \
