@@ -19,7 +19,7 @@ class NativeVmBridgeInstrumentationTest {
 
     @Test
     fun packagedNativeExecutableCanRunFromInstalledLibraryDirectory() {
-        val context = InstrumentationRegistry.getInstrumentation().context
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
         val executable = File(context.applicationInfo.nativeLibraryDir, "libpocketos_exec_probe.so")
 
         assertTrue("Probe executable missing: ${executable.absolutePath}", executable.isFile)

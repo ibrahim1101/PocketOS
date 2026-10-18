@@ -28,7 +28,7 @@ android {
     }
 
     sourceSets {
-        getByName("androidTest").jniLibs.srcDir("$buildDir/generated/androidTestJniLibs")
+        getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("generated/androidExecProbeJniLibs"))
     }
 
     externalNativeBuild {

@@ -35,7 +35,7 @@ jobs:
           sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           bash scripts/build-android-exec-probe.sh \
             "$sdk_root/ndk/27.2.12479018" \
-            android/app/build/generated/androidTestJniLibs
+            android/app/build/generated/androidExecProbeJniLibs
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
