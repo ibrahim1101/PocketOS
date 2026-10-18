@@ -6,10 +6,11 @@ Updated: 2026-10-18
 
 - Active milestone: M2 — Android ARM64 QEMU build, guest asset installation, and service integration.
 - Active branch: `feat/m1-linux-boot`; PR #1 remains open.
-- Latest verified revision: `2484b33d638a4176cdfc12e7b57a78681afcf667`.
-- CI run #135 passed the Android ARM64 QEMU cross-build and APK audit, Android JVM unit tests and x86_64 bridge instrumentation, and the Alpine ARM64 boot, shell, persistence, and localhost HTTP checks.
+- Latest verified revision: `9bc8f46cd0575fa9aa3ce83ac9885c808a4f078d`.
+- CI run #138 passed the Android ARM64 QEMU cross-build and APK audit, Android JVM unit tests and x86_64 bridge instrumentation, and the Alpine ARM64 boot, shell, persistence, and localhost HTTP checks.
 - The APK contains QEMU 11.1.2 plus Alpine's kernel, matching initramfs, compressed ext4 seed disk, and SHA-256 manifest.
 - `GuestAssetInstaller` verifies packaged hashes and ext4 format, stages versioned boot assets, atomically expands the seed disk to app-private storage, preserves it across repeat installs, and has an app-context factory. Android instrumentation installs the real APK assets, checks the 256 MiB ext4 disk, and verifies repeat-install preservation.
+- `GuestDiskLease` obtains an exclusive OS file lock beside the guest disk. Unit and Android instrumentation tests reject a concurrent writer and verify the lease can be acquired after release.
 - `GuestReadinessProbe` detects Alpine's complete serial login prompt across chunks and ANSI output.
 - `SessionProtection` persists an elapsed-realtime deadline, preserves it through process recovery, expires pre-reboot checkpoints, and applies the 20% battery cutoff. `BatteryLevelMonitor` uses broadcasts without polling.
 - `GuestBootCoordinator` ties readiness to the VM state machine: process start reaches BOOTING, while RUNNING requires both the login prompt and a saved deadline. It rejects low-battery readiness and fails on unexpected process exit.
