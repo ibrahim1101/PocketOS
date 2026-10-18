@@ -1,26 +1,28 @@
 # Android QEMU integration
 
-Status: Android ARM64 QEMU and Alpine guest assets are built and packaged. The app-private installer, serial readiness probe, and session-protection primitives are unit-tested. Android-side QEMU execution, guest boot, and service integration remain unverified; the VM service remains fail-closed.
+Status: Android ARM64 QEMU and Alpine guest assets are built and packaged. The app-private installer, serial readiness probe, session-protection primitives, and lifecycle coordinator are unit-tested. Android-side QEMU execution, guest boot, and service integration remain unverified; the VM service remains fail-closed.
 
 ## Verified build and package boundary
 
-CI run #130 passed the pinned QEMU source fetch, Android ARM64 cross-build, APK assembly, native dependency audit, Android unit and x86_64 instrumentation tests, and host Alpine guest gates.
+CI run #132 passed the pinned QEMU source fetch, Android ARM64 cross-build, APK assembly, native dependency audit, Android unit and x86_64 instrumentation tests, and host Alpine guest gates.
 
 The cross-build downloads QEMU 11.1.2 from the pinned upstream archive and verifies SHA-256 `731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016`. It builds checksum-pinned libiconv, libffi, PCRE2, GLib, pixman, and libslirp static dependencies. A Bionic compatibility shim provides QEMU's temporary POSIX shared-memory file descriptor using an immediately unlinked file in its working directory.
 
 The APK contains an Android AArch64 PIE staged as `lib/arm64-v8a/libqemu-system-aarch64.so`. CI checks ELF machine, PIE type, `/system/bin/linker64`, required system libraries, and absence of RPATH/RUNPATH.
 
-The APK also contains Alpine's `vmlinuz-virt`, matching `initramfs-virt`, gzip-compressed ext4 seed disk, and SHA-256 manifest. `GuestAssetInstaller.forContext(context)` reads packaged assets, validates hashes, stores versioned boot assets in app-private storage, atomically expands and validates the disk, and preserves an existing disk on repeat install. JVM tests cover hash rejection and data preservation.
+The APK also contains Alpine's `vmlinuz-virt`, matching `initramfs-virt`, gzip-compressed ext4 seed disk, and SHA-256 manifest. `GuestAssetInstaller.forContext(context)` reads packaged assets, validates hashes, stores versioned boot assets in app-private storage, atomically expands and validates the disk, and preserves an existing disk on repeat install.
 
 ## Guest readiness and session protection
 
-`GuestReadinessProbe` recognizes the complete Alpine `pocketos login:` prompt across serial chunks, strips ANSI sequences, and does not treat a `Last login:` banner as readiness. This provides a concrete signal for the lifecycle state machine; it is not yet wired into ServerService.
+`GuestReadinessProbe` detects the complete Alpine `pocketos login:` prompt across serial chunks, removes ANSI sequences, and avoids treating `Last login:` as readiness.
 
-`SessionProtection` stores a monotonic elapsed-realtime start and deadline through a `SessionCheckpointStore`. SharedPreferences commits the deadline before use. Recovery preserves the existing deadline rather than granting a new hour; a checkpoint from before device reboot expires. Defaults remain 60 minutes, 20% battery cutoff, and no-stop-on-Wi-Fi-disconnect.
+`SessionProtection` stores a monotonic elapsed-realtime start and deadline through a `SessionCheckpointStore`. SharedPreferences commits the deadline before use. Recovery preserves the existing deadline rather than granting another hour; a checkpoint from before device reboot expires. Defaults remain 60 minutes, 20% battery cutoff, and no-stop-on-Wi-Fi-disconnect.
 
-`BatteryLevelMonitor` listens for Android's sticky `ACTION_BATTERY_CHANGED` broadcast and subsequent events without polling. JVM tests cover start refusal at 20%, timer expiry, process recreation, idempotent recovery, reboot detection, and checkpoint clearing.
+`BatteryLevelMonitor` listens for Android's sticky `ACTION_BATTERY_CHANGED` broadcast and subsequent events without polling.
 
-These are tested components only. `ServerService` does not yet call the installer, readiness probe, session policy, battery monitor, or process supervisor.
+`GuestBootCoordinator` couples these components to `VmLifecycle`: process start advances to BOOTING, and the RUNNING transition requires a complete login prompt and a persisted session deadline. It reports low-battery rejection and clears the session checkpoint after a process exit. JVM tests cover readiness, timer start at the prompt, cutoff, clean shutdown, and unexpected exit.
+
+These are tested components only. `ServerService` does not yet call the installer, coordinator, battery monitor, session policy, or process supervisor.
 
 ## Existing Android boundary tests
 
@@ -34,11 +36,11 @@ These are tested components only. `ServerService` does not yet call the installe
 
 The service must run in the dedicated `:vm` process as a foreground service while the guest is active; launch QEMU from the APK-extracted native-library directory; use app-private working storage and the persistent guest disk; keep serial and diagnostics separate; request graceful QMP shutdown before bounded force termination; and bind localhost forwarding to loopback by default.
 
-The service may transition to RUNNING only after the serial login prompt is detected. The 60-minute deadline begins at that transition. Low battery blocks startup and requests shutdown at or below 20%. ARM64 Android execution and secure guest login remain unverified, so service startup stays disabled.
+The service may transition to RUNNING only after the serial login prompt is detected and the deadline is stored. Low battery blocks startup and requests shutdown at or below 20%. ARM64 Android execution and secure guest login remain unverified, so service startup stays disabled.
 
 ## Next proof gates
 
-1. Wire the installer, process supervisor, readiness probe, battery monitor, and deadline store into foreground-service lifecycle tests.
+1. Integrate installer, process supervisor, coordinator, battery monitor, and deadline store into foreground-service lifecycle tests.
 2. Run QEMU on ARM64 Android and boot the packaged Alpine guest.
 3. Bridge serial input/output, add secure first-run credentials, and verify package installation and disk persistence.
 4. Verify QMP shutdown, timer cutoff, battery cutoff, and physical-device performance.
