@@ -116,6 +116,76 @@ jobs:
             android/app/build/outputs/apk/debug/app-debug.apk \
             "$sdk_root/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
 
+      - name: Upload Android APKs for ARM64 runtime validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocketos-debug-apks
+          path: android/app/build/outputs/apk/
+          if-no-files-found: error
+
+  android-arm64-runtime:
+    name: ARM64 Android QEMU runtime smoke test
+    needs: android
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android SDK and ARM64 emulator image
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools emulator platforms;android-35 build-tools;35.0.0 system-images;android-35;google_apis;arm64-v8a"
+      - name: Download APKs built and tested by x86_64 job
+        uses: actions/download-artifact@v4
+        with:
+          name: pocketos-debug-apks
+          path: ${{ runner.temp }}/apks
+      - name: Start ARM64 Android emulator
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/.android/avd"
+          echo "no" | avdmanager create avd --force --name pocketos-arm64-ci --package "system-images;android-35;google_apis;arm64-v8a" --device pixel_2
+          emulator -avd pocketos-arm64-ci -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -accel off > "$RUNNER_TEMP/emulator-arm64.log" 2>&1 &
+          emulator_pid=$!
+          if ! timeout 180s adb wait-for-device; then
+            cat "$RUNNER_TEMP/emulator-arm64.log"
+            kill "$emulator_pid" || true
+            exit 1
+          fi
+          booted=false
+          for attempt in $(seq 1 240); do
+            if [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              booted=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$booted" != true ]]; then
+            cat "$RUNNER_TEMP/emulator-arm64.log"
+            adb devices -l
+            kill "$emulator_pid" || true
+            exit 1
+          fi
+          test "$(adb shell getprop ro.product.cpu.abi | tr -d '\r')" = "arm64-v8a"
+      - name: Execute packaged ARM64 QEMU on Android
+        run: |
+          set -euxo pipefail
+          app_apk="$(find "$RUNNER_TEMP/apks" -name app-debug.apk -print -quit)"
+          test_apk="$(find "$RUNNER_TEMP/apks" -name app-debug-androidTest.apk -print -quit)"
+          test -n "$app_apk"
+          test -n "$test_apk"
+          adb install -r "$app_apk"
+          adb install -r "$test_apk"
+          output="$(adb shell am instrument -w -r -e class com.pocketos.app.QemuAndroidRuntimeInstrumentationTest com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner)"
+          printf '%s\n' "$output"
+          grep -F "OK (1 test)" <<< "$output"
+          if grep -Eq "FAILURES!!!|Process crashed" <<< "$output"; then
+            exit 1
+          fi
+
   guest-boot:
     name: Alpine ARM64 guest build and boot
     runs-on: ubuntu-latest
