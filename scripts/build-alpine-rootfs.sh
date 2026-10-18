@@ -39,9 +39,9 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   # Root login disabled by default: set a password offline before remote access.
   truncate -s "${SIZE_MB}M" "/output/$OUTPUT_NAME"
   mkfs.ext4 -q -F -d /guest "/output/$OUTPUT_NAME"
+  chmod 644 "/output/$OUTPUT_NAME"
   echo "Guest disk created."
 '
-chmod 644 "$OUT"
 echo "Output: $OUT"
 echo "The ext4 disk contains Alpine's linux-virt kernel and matching modules."
 echo "Extract /boot/vmlinuz-virt and boot it with scripts/boot-guest.sh."
