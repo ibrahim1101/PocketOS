@@ -111,7 +111,7 @@ def main() -> int:
             "&& udhcpc -n -q -t 5 -T 1 -i eth0 "
             "&& busybox httpd -f -p 0.0.0.0:8080 -h /tmp/pocketos-www "
             ">/tmp/pocketos-httpd.log 2>&1 & "
-            f"sleep 1; echo {READY_MARKER.decode()}\\n"
+            f"sleep 1; echo {READY_MARKER.decode()}\n"
         ).encode()
         os.write(master_fd, setup)
         read_until(process, master_fd, buffer, READY_MARKER, time.monotonic() + args.timeout)
