@@ -1,6 +1,5 @@
 package com.pocketos.app
 
-import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
@@ -16,10 +15,11 @@ import java.util.concurrent.TimeUnit
 class QemuAndroidRuntimeInstrumentationTest {
     @Test
     fun packagedArm64QemuRunsOnAndroid() {
-        assumeTrue("ARM64 Android runtime required", Build.SUPPORTED_ABIS.contains("arm64-v8a"))
-
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val qemu = File(context.applicationInfo.nativeLibraryDir, "libqemu-system-aarch64.so")
+        val libraryDirectory = File(context.applicationInfo.nativeLibraryDir)
+        assumeTrue("ARM64 Android runtime required", libraryDirectory.name == "arm64")
+
+        val qemu = File(libraryDirectory, "libqemu-system-aarch64.so")
         assertTrue("Packaged ARM64 QEMU is missing: $qemu", qemu.isFile)
         assertTrue("Packaged ARM64 QEMU is not executable: $qemu", qemu.canExecute())
 
