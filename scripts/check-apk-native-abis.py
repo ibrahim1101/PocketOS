@@ -57,9 +57,9 @@ def main() -> int:
                 capture_output=True,
                 text=True,
             )
-            needed = re.findall(r"\\(NEEDED\\).*?\\[([^]]+)\\]", dynamic.stdout)
+            needed = re.findall(r"\(NEEDED\).*?\[([^\]]+)\]", dynamic.stdout)
             search_paths = re.findall(
-                r"\\((?:RPATH|RUNPATH)\\).*?\\[([^]]*)\\]", dynamic.stdout
+                r"\((?:RPATH|RUNPATH)\).*?\[([^\]]*)\]", dynamic.stdout
             )
             if search_paths:
                 raise SystemExit(
