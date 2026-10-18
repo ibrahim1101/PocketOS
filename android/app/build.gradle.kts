@@ -27,6 +27,10 @@ android {
         }
     }
 
+    sourceSets {
+        getByName("androidTest").jniLibs.srcDir("$buildDir/generated/androidTestJniLibs")
+    }
+
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")

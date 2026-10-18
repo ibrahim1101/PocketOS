@@ -30,6 +30,12 @@ jobs:
           sdkmanager_path="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager_path" --licenses
           "$sdkmanager_path" "platforms;android-35" "build-tools;35.0.0" "platform-tools" "cmake;3.22.1" "ndk;27.2.12479018" "emulator" "system-images;android-35;google_apis;x86_64"
+      - name: Build packaged executable probe for Android ABIs
+        run: |
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          bash scripts/build-android-exec-probe.sh \
+            "$sdk_root/ndk/27.2.12479018" \
+            android/app/build/generated/androidTestJniLibs
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
