@@ -9,16 +9,25 @@ if [[ ! "$SIZE_MB" =~ ^[0-9]+$ ]] || (( SIZE_MB < 256 )); then
   echo "SIZE_MB must be an integer >= 256" >&2
   exit 2
 fi
+if [[ "$ALPINE_TAG" == "edge" ]]; then
+  ALPINE_REPOSITORY_BRANCH="edge"
+elif [[ "$ALPINE_TAG" =~ ^[0-9]+\.[0-9]+$ ]]; then
+  ALPINE_REPOSITORY_BRANCH="v$ALPINE_TAG"
+else
+  echo "ALPINE_TAG must be a stable major.minor version (for example 3.22) or edge" >&2
+  exit 2
+fi
 command -v docker >/dev/null || { echo "Docker is required" >&2; exit 2; }
 mkdir -p "$(dirname "$OUT")"
 OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 [[ ! -e "$OUT" ]] || { echo "Refusing to overwrite $OUT" >&2; exit 2; }
 echo "Building Alpine $ALPINE_TAG ARM64 disk ($SIZE_MB MiB)..."
-docker run --rm --platform linux/arm64 -e SIZE_MB -v "$(dirname "$OUT"):/output" -e OUTPUT_NAME="$(basename "$OUT")" "alpine:$ALPINE_TAG" sh -euc '
+docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$ALPINE_REPOSITORY_BRANCH" -v "$(dirname "$OUT"):/output" -e OUTPUT_NAME="$(basename "$OUT")" "alpine:$ALPINE_TAG" sh -euc '
   apk add --no-cache e2fsprogs
-  mkdir -p /guest /output
+  mkdir -p /guest/etc/apk/keys /guest/etc/network /guest/etc/runlevels/default /guest/etc/runlevels/boot /guest/etc/runlevels/sysinit
+  cp /etc/apk/keys/* /guest/etc/apk/keys/
+  printf "https://dl-cdn.alpinelinux.org/alpine/%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/%s/community\n" "$ALPINE_REPOSITORY_BRANCH" "$ALPINE_REPOSITORY_BRANCH" > /guest/etc/apk/repositories
   apk --root /guest --initdb --arch aarch64 add --no-cache alpine-base openrc busybox-initscripts util-linux
-  mkdir -p /guest/etc/network /guest/etc/runlevels/default /guest/etc/runlevels/boot /guest/etc/runlevels/sysinit
   printf "pocketos\n" > /guest/etc/hostname
   printf "auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet dhcp\n" > /guest/etc/network/interfaces
   printf "ttyAMA0::respawn:/sbin/getty -L 115200 ttyAMA0 vt100\n" >> /guest/etc/inittab
