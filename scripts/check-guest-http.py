@@ -92,9 +92,9 @@ def read_status_line(
         start = buffer.find(marker)
         if start >= 0:
             line_start = start + len(marker)
-            line_end = buffer.find(b"\\n", line_start)
+            line_end = buffer.find(bytes([10]), line_start)
             if line_end >= 0:
-                return buffer[line_start:line_end].rstrip(b"\\r").decode("ascii")
+                return buffer[line_start:line_end].rstrip(bytes([13])).decode("ascii")
         if process.poll() is not None:
             raise RuntimeError(f"QEMU exited with status {process.returncode}")
         if time.monotonic() >= deadline:
