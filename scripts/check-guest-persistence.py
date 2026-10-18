@@ -128,7 +128,7 @@ def main() -> int:
         args.rootfs,
         args.timeout,
         (
-            f"mkdir -p /var/lib/pocketos && printf '%s\\n' '{MARKER_VALUE}' > {MARKER_PATH} "
+            f"mount -o remount,rw / && mkdir -p /var/lib/pocketos && printf '%s\\n' '{MARKER_VALUE}' > {MARKER_PATH} "
             f"&& sync && echo {write_done.decode()} && poweroff -f\n"
         ).encode(),
         write_done,
@@ -140,12 +140,12 @@ def main() -> int:
     try:
         wait_for_shell(process, master_fd, args.timeout, buffer)
         command = (
-            f"if [ \"$(cat {MARKER_PATH} 2>/dev/null)\" = \"{MARKER_VALUE}\" ]; "
+            f"if mount -o remount,rw / && [ \"$(cat {MARKER_PATH} 2>/dev/null)\" = \"{MARKER_VALUE}\" ]; "
             f"then rm -f {MARKER_PATH}; sync; echo {verify_done.decode()}; "
-            "else echo __POCKETOS_PERSIST_MISSING__; fi\n"
+            "else echo __POCKETOS_PERSIST_MISSING__; fi; echo __POCKETOS_PERSIST_DONE__\n"
         )
         os.write(master_fd, command.encode())
-        read_until(process, master_fd, verify_done, time.monotonic() + args.timeout, buffer)
+        read_until(process, master_fd, b"__POCKETOS_PERSIST_DONE__", time.monotonic() + args.timeout, buffer)
         if b"__POCKETOS_PERSIST_MISSING__" in buffer:
             raise RuntimeError("guest marker was missing after the QEMU restart")
         print("Guest ext4 write survived shutdown and QEMU restart.")
