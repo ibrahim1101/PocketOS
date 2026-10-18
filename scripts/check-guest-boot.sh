@@ -2,7 +2,8 @@
 # Boot the Alpine disk under QEMU and require its serial login prompt.
 set -euo pipefail
 : "${KERNEL:?Set KERNEL to the ARM64 Linux Image extracted from the guest disk}"
-: "${ROOTFS:?Set ROOTFS to the Alpine ARM64 ext4 disk image}": "${INITRAMFS:?Set INITRAMFS to the matching Alpine initramfs image}"
+: "${INITRAMFS:?Set INITRAMFS to the matching Alpine initramfs image}"
+: "${ROOTFS:?Set ROOTFS to the Alpine ARM64 ext4 disk image}"
 BOOT_TIMEOUT_SECONDS="${BOOT_TIMEOUT_SECONDS:-120}"
 for path in "$KERNEL" "$INITRAMFS" "$ROOTFS"; do
   [[ -f "$path" ]] || { echo "Missing file: $path" >&2; exit 2; }
@@ -14,7 +15,7 @@ trap 'rm -f "$log"' EXIT
 qemu-system-aarch64 \
   -machine virt -cpu cortex-a72 -smp 1 -m 512M \
   -display none -monitor none -serial stdio -no-reboot \
-  -kernel "$KERNEL" \
+  -kernel "$KERNEL" -initrd "$INITRAMFS" \
   -append 'console=ttyAMA0 root=/dev/vda rw rootwait' \
   -drive "if=none,file=$ROOTFS,format=raw,id=rootdisk" \
   -device virtio-blk-device,drive=rootdisk \
