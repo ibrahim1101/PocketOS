@@ -42,6 +42,11 @@ class SessionProtection(
         if (!canStart(batteryPercent)) return false
         val startedAt = clock.nowMs()
         require(startedAt >= 0) { "Elapsed realtime cannot be negative" }
+        val existing = store.load()
+        if (existing != null) {
+            if (startedAt < existing.startedAtElapsedMs || startedAt >= existing.deadlineElapsedMs) return false
+            return true
+        }
         val deadline = if (Long.MAX_VALUE - startedAt < SessionPolicy.MAX_SESSION_MS) {
             Long.MAX_VALUE
         } else {

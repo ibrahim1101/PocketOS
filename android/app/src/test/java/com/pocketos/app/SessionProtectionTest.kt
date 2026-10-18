@@ -20,6 +20,8 @@ class SessionProtectionTest {
 
         clock.now = 10_000 + 15 * 60 * 1000
         val recreated = SessionProtection(store, clock)
+        assertTrue(recreated.startWhenRunning(80))
+        assertEquals(10_000 + SessionPolicy.MAX_SESSION_MS, store.checkpoint?.deadlineElapsedMs)
         assertEquals(45 * 60 * 1000L, recreated.remainingMs())
         assertNull(recreated.stopReason(80))
     }
