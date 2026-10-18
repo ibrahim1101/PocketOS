@@ -128,8 +128,8 @@ def main() -> int:
         args.rootfs,
         args.timeout,
         (
-            f"mkdir -p /var/lib/pocketos && printf '%s\\n' '{MARKER_VALUE}' > {MARKER_PATH} "
-            f"&& sync && echo {write_done.decode()} && poweroff -f\\n"
+            f"mkdir -p /var/lib/pocketos && printf '%s\n' '{MARKER_VALUE}' > {MARKER_PATH} "
+            f"&& sync && echo {write_done.decode()} && poweroff -f\n"
         ).encode(),
         write_done,
     )
@@ -142,7 +142,7 @@ def main() -> int:
         command = (
             f"if [ \"$(cat {MARKER_PATH} 2>/dev/null)\" = \"{MARKER_VALUE}\" ]; "
             f"then rm -f {MARKER_PATH}; sync; echo {verify_done.decode()}; "
-            "else echo __POCKETOS_PERSIST_MISSING__; fi\\n"
+            "else echo __POCKETOS_PERSIST_MISSING__; fi\n"
         )
         os.write(master_fd, command.encode())
         read_until(process, master_fd, verify_done, time.monotonic() + args.timeout, buffer)
