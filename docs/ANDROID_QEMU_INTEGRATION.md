@@ -19,6 +19,10 @@ The Termux package recipe is a useful compatibility reference, but it does not p
 - That recipe builds QEMU `11.1.2` from the upstream release archive with SHA-256 `731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016`. Its target list includes `aarch64-softmmu`.
 - The recipe also carries Android compatibility patches and expects the Termux package prefix and dependency set. Reusing its produced executable would keep those environment assumptions and would not meet PocketOS's embedded JNI loading model.
 
+## Pinned source acquisition
+
+`scripts/fetch-android-qemu-source.sh` now provides a reproducible source-only step for QEMU 11.1.2. It downloads the upstream release archive over HTTPS, checks the pinned SHA-256 (`731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016`), validates the archive root and QEMU configure script, and refuses to overwrite an existing destination. CI ShellCheck passes for the script. This makes the source input reproducible; it does not configure, compile, or package QEMU, and does not change the Android runtime status above.
+
 The next build spike should start from the pinned upstream release and explicitly carry only the required compatibility patches. It should produce a JNI-loadable shared library for `arm64-v8a`, with the QEMU main loop isolated behind start, readiness, and stop entry points. The Termux build output remains a reference for portability fixes, not a runtime dependency.
 
 ## First integration spike
