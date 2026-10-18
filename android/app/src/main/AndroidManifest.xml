@@ -8,7 +8,7 @@
     <activity android:name=".MainActivity" android:exported="true">
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
     </activity>
-    <service android:name=".ServerService" android:exported="false" android:foregroundServiceType="specialUse">
+    <service android:name=".ServerService" android:exported="false" android:process=":vm" android:foregroundServiceType="specialUse">
       <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-initiated local Linux VM session control" />
     </service>
     <receiver android:name=".ServerWidget" android:exported="true">
