@@ -49,14 +49,14 @@ In PowerShell:
 adb devices -l
 ```
 
-From Android Studio, open the repository's `android/` project. This starter does not include a Gradle wrapper and has not yet been verified to build. Resolve Gradle sync and build errors before attempting to install the debug APK.
+From Android Studio, open the repository's `android/` project. This starter does not include a Gradle wrapper; CI provisions Gradle 8.9 and verifies the APK build, JNI load, and unit tests on an x86_64 emulator. Android-native QEMU is still not linked, so the APK does not start a Linux VM.
 
 ## Verification gates
 
 1. Alpine disk image successfully created.
 2. ARM64 Linux kernel boots through host-side QEMU into a serial login prompt.
 3. CI writes a marker to the ext4 guest disk, powers Alpine off, restarts QEMU with the same disk, and verifies the marker survives.
-4. HTTP forwarding works through 127.0.0.1:8080.
+4. CI starts Alpine's `busybox-extras httpd` inside the guest and verifies its exact response through a host forward bound to `127.0.0.1:18080` and guest port 8080. The local `scripts/boot-guest.sh` example maps host `127.0.0.1:8080` to guest port 8080.
 5. Android APK builds and launches in the emulator.
 6. Android lifecycle and widget behaviors pass tests.
 7. Actual native Android QEMU integration is tested separately.
