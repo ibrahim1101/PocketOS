@@ -6,6 +6,7 @@ ndk_root="${1:?usage: build-android-qemu.sh <ndk-root> <qemu-source> <jni-libs-r
 qemu_source="${2:?usage: build-android-qemu.sh <ndk-root> <qemu-source> <jni-libs-root> <build-root>}"
 jni_libs_root="${3:?usage: build-android-qemu.sh <ndk-root> <qemu-source> <jni-libs-root> <build-root>}"
 build_root="${4:?usage: build-android-qemu.sh <ndk-root> <qemu-source> <jni-libs-root> <build-root>}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ ! -x "$qemu_source/configure" ]]; then
   echo "QEMU source is missing its configure script: $qemu_source" >&2
@@ -204,10 +205,16 @@ meson setup "$build_root/libslirp-build" "$sources/libslirp-v4.9.5" \
   --wrap-mode=nofallback
 ninja -C "$build_root/libslirp-build" -j2 install
 
+# Bionic does not provide POSIX shm_open/librt. QEMU only needs an unlinked
+# temporary file descriptor for its internal shared-memory mapping.
+compat_object="$build_root/pocketos-android-shm-compat.o"
+"$cc" -std=c11 -D_GNU_SOURCE -O2 -fPIC -c "$script_dir/android-shm-compat.c" -o "$compat_object"
+"$llvm_ar" rcs "$prefix/lib/libpocketos-android-compat.a" "$compat_object"
+
 export PATH="$wrappers:$PATH"
 export CFLAGS="-O2 -fPIE -D__BIONIC__=1 -I$prefix/include"
 export CXXFLAGS="-O2 -fPIE"
-export LDFLAGS="-pie -L$prefix/lib"
+export LDFLAGS="-pie -L$prefix/lib -Wl,--whole-archive -lpocketos-android-compat -Wl,--no-whole-archive"
 qemu_build="$build_root/qemu-build"
 mkdir -p "$qemu_build"
 (
