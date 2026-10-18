@@ -60,6 +60,7 @@ jobs:
           bash scripts/package-android-guest-assets.sh \
             "$RUNNER_TEMP/pocketos-guest.ext4" \
             android/app/src/main/assets/pocketos
+          find android/app/src/main/assets/pocketos -maxdepth 1 -type f -printf "%f %s bytes\n"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
@@ -99,6 +100,7 @@ jobs:
         run: |
           gradle -p android testDebugUnitTest assembleDebug
           apk=android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -Z1 "$apk" | grep -F "assets/pocketos/"
           unzip -l "$apk" | grep -F "lib/x86_64/libpocketos_exec_probe.so"
           unzip -l "$apk" | grep -F "lib/arm64-v8a/libpocketos_exec_probe.so"
           unzip -l "$apk" | grep -F "lib/arm64-v8a/libqemu-system-aarch64.so"
