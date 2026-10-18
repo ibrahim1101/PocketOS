@@ -132,6 +132,20 @@ def send_checked(
     if output.strip() != "0":
         raise RuntimeError(f"guest setup command failed with status {output}: {command}")
 
+def verify_loopback_listener(port: int) -> None:
+    listeners: list[str] = []
+    for line in open("/proc/net/tcp", encoding="ascii").read().splitlines()[1:]:
+        fields = line.split()
+        local_address, local_port = fields[1].split(":")
+        if int(local_port, 16) == port and fields[3] == "0A":
+            listeners.append(local_address.upper())
+    if listeners != ["0100007F"]:
+        raise RuntimeError(
+            f"expected TCP port {port} to listen only on 127.0.0.1; found {listeners!r}"
+        )
+    print(f"QEMU forwarding listener is bound only to 127.0.0.1:{port}.")
+
+
 def stop(process: subprocess.Popen[bytes], master_fd: int) -> None:
     try:
         if process.poll() is None:
@@ -183,6 +197,7 @@ def main() -> int:
             "cat /tmp/pocketos-httpd.log; false; fi"
         )
         send_checked(process, master_fd, buffer, start_server, SERVER_STARTED, args.timeout)
+        verify_loopback_listener(HOST_PORT)
 
         deadline = time.monotonic() + min(args.timeout, 45)
         last_error: Exception | None = None
