@@ -16,7 +16,7 @@ qemu-system-aarch64 \
   -machine virt -cpu cortex-a72 -smp 1 -m 512M \
   -display none -monitor none -serial stdio -no-reboot \
   -kernel "$KERNEL" -initrd "$INITRAMFS" \
-  -append 'console=ttyAMA0 root=/dev/vda rw rootwait' \
+  -append 'console=ttyAMA0 root=/dev/vda rootfstype=ext4 rw rootwait' \
   -drive "if=none,file=$ROOTFS,format=raw,id=rootdisk" \
   -device virtio-blk-device,drive=rootdisk \
   -netdev user,id=net0,hostfwd=tcp:127.0.0.1:8080-:8080 \
