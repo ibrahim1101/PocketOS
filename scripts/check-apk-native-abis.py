@@ -13,6 +13,11 @@ from pathlib import Path
 EXPECTED_MACHINES = {
     "lib/arm64-v8a/libpocketos_vm.so": "AArch64",
     "lib/x86_64/libpocketos_vm.so": "Advanced Micro Devices X86-64",
+    "lib/arm64-v8a/libqemu-system-aarch64.so": "AArch64",
+}
+ANDROID_SYSTEM_LIBRARIES = {
+    "libandroid.so", "libatomic.so", "libc.so", "libdl.so",
+    "liblog.so", "libm.so", "libz.so",
 }
 
 
@@ -51,6 +56,18 @@ def main() -> int:
                     f"{archive_path}: expected ELF machine {expected_machine!r}, "
                     f"found {machine_lines!r}"
                 )
+            if archive_path.endswith("libqemu-system-aarch64.so"):
+                if not re.search(r"Type:\s+DYN", result.stdout):
+                    raise SystemExit(f"{archive_path}: expected a PIE (ELF type DYN)")
+                program_headers = subprocess.run(
+                    [str(args.llvm_readelf), "-l", str(library)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                if "/system/bin/linker64" not in program_headers.stdout:
+                    raise SystemExit(f"{archive_path}: expected Android /system/bin/linker64")
+
             dynamic = subprocess.run(
                 [str(args.llvm_readelf), "-d", str(library)],
                 check=True,
@@ -69,6 +86,11 @@ def main() -> int:
                 raise SystemExit(f"{archive_path}: Termux runtime dependency detected: {needed!r}")
             if any(item.startswith("/") for item in needed):
                 raise SystemExit(f"{archive_path}: absolute ELF dependency detected: {needed!r}")
+            unknown = sorted(set(needed) - ANDROID_SYSTEM_LIBRARIES)
+            if unknown:
+                raise SystemExit(
+                    f"{archive_path}: non-system or unreviewed Android dependencies {unknown!r}"
+                )
             print(
                 f"{archive_path}: ELF machine {machine_lines[0]}; "
                 f"DT_NEEDED={', '.join(needed) or '(none)'}; no RPATH/RUNPATH"
