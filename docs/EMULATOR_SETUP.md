@@ -55,7 +55,7 @@ From Android Studio, open the repository's `android/` project. This starter does
 
 1. Alpine disk image successfully created.
 2. ARM64 Linux kernel boots through host-side QEMU into a serial login prompt.
-3. Disk writes persist across clean restarts.
+3. CI writes a marker to the ext4 guest disk, powers Alpine off, restarts QEMU with the same disk, and verifies the marker survives.
 4. HTTP forwarding works through 127.0.0.1:8080.
 5. Android APK builds and launches in the emulator.
 6. Android lifecycle and widget behaviors pass tests.
