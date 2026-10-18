@@ -22,7 +22,7 @@ class MainActivity : Activity() {
         }
         column.addView(label("PocketOS", 30f))
         column.addView(label("Rootless CLI Linux server · Development scaffold", 16f))
-        column.addView(label("VM status: NOT IMPLEMENTED\nGuest: Alpine ARM64 (planned)\nSession cap: 60 minutes\nBattery cutoff: 20%\nWi-Fi disconnect shutdown: off", 15f))
+        column.addView(label("VM status: NOT IMPLEMENTED\nNative bridge: ${NativeVmBridge.status()}\nQEMU engine: NOT LINKED\nGuest: Alpine ARM64 (host boot verified)\nSession cap: 60 minutes\nBattery cutoff: 20%\nWi-Fi disconnect shutdown: off", 15f))
         column.addView(Button(this).apply {
             text = "View implementation status"
             setOnClickListener {
