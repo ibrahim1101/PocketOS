@@ -86,6 +86,10 @@ jobs:
         run: |
           bash -n scripts/*.sh
           shellcheck scripts/*.sh
+      - name: Fetch and verify pinned Android QEMU source
+        run: |
+          bash scripts/fetch-android-qemu-source.sh "$RUNNER_TEMP/qemu-11.1.2"
+          test -x "$RUNNER_TEMP/qemu-11.1.2/configure"
       - name: Check Python guest probe syntax
         run: python3 -m py_compile scripts/check-guest-shell.py scripts/check-guest-persistence.py scripts/check-guest-http.py
       - name: Build an ARM64 Alpine disk
