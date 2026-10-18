@@ -26,7 +26,7 @@ class VmLifecycleTest {
     fun rejectsDuplicateAndOutOfOrderEvents() {
         val lifecycle = VmLifecycle()
 
-        assertFalse(lifecycle.transitionTo(VmState.PREPARING))
+        assertFalse(lifecycle.transitionTo(VmState.STARTING))
         assertTrue(lifecycle.transitionTo(VmState.PREPARING))
         assertFalse(lifecycle.transitionTo(VmState.PREPARING))
         assertFalse(lifecycle.transitionTo(VmState.RUNNING))
