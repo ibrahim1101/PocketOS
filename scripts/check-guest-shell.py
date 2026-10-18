@@ -71,7 +71,7 @@ def main() -> int:
             if not chunk:
                 continue
             buffer.extend(chunk)
-            if not command_sent and b"Run /bin/sh as init process" in buffer:
+            if not command_sent and b"can't access tty; job control turned off" in buffer:
                 os.write(
                     master_fd,
                     b"echo __POCKETOS_UNAME_BEGIN__\nuname -s\necho __POCKETOS_UNAME_DONE__\ncat /etc/alpine-release\necho __POCKETOS_TEST_DONE__\n",
