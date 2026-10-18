@@ -171,7 +171,7 @@ def main() -> int:
         )
         send_checked(
             process, master_fd, buffer,
-            "udhcpc -n -q -t 5 -T 1 -i eth0",
+            "ip link set eth0 up && udhcpc -n -q -t 5 -T 1 -i eth0",
             b"__POCKETOS_DHCP_READY__", args.timeout,
         )
 
