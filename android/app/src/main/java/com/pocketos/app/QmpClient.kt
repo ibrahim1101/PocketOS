@@ -16,8 +16,8 @@ class QmpClient(
         require(timeoutMillis > 0) { "QMP timeout must be positive" }
 
         LocalSocket().use { socket ->
-            socket.soTimeout = timeoutMillis
             socket.connect(LocalSocketAddress(socketName, namespace))
+            socket.soTimeout = timeoutMillis
             val reader = BufferedReader(InputStreamReader(socket.inputStream, Charsets.UTF_8))
             val writer = BufferedWriter(OutputStreamWriter(socket.outputStream, Charsets.UTF_8))
 
