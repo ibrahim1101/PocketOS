@@ -1,5 +1,6 @@
 package com.pocketos.app
 
+import android.content.Context
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -180,6 +181,14 @@ class GuestAssetInstaller(
     }
 
     companion object {
+        fun forContext(context: Context): GuestAssetInstaller {
+            val appContext = context.applicationContext
+            return GuestAssetInstaller(
+                assetSource = GuestAssetSource { name -> appContext.assets.open("pocketos/$name") },
+                filesDirectory = appContext.filesDir,
+            )
+        }
+
         private const val MANIFEST = "assets.sha256"
         private const val KERNEL = "vmlinuz-virt"
         private const val INITRAMFS = "initramfs-virt"
