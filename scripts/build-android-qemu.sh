@@ -71,6 +71,9 @@ fetch_source "libffi-3.8.0.tar.gz" \
 fetch_source "pcre2-10.49.tar.bz2" \
   "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.49/pcre2-10.49.tar.bz2" \
   "53c156e1ba416a20da8e65395daa132da0d80e76910424caca3fcdae7831d384"
+fetch_source "libiconv-1.19.tar.gz" \
+  "https://mirrors.kernel.org/gnu/libiconv/libiconv-1.19.tar.gz" \
+  "88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6"
 fetch_source "glib-2.90.1.tar.xz" \
   "https://download.gnome.org/sources/glib/2.90/glib-2.90.1.tar.xz" \
   "93c941aa17d5eb1d53fe838365f29a8b4e539c222a256d974ec8f30fc413e396"
@@ -100,6 +103,19 @@ exec pkg-config --static "$@"
 EOF
 chmod 755 "$static_pkg_config"
 export PKG_CONFIG="$static_pkg_config"
+
+iconv_source="$sources/libiconv-1.19"
+(
+  cd "$iconv_source"
+  ./configure \
+    --host=aarch64-linux-android \
+    --prefix="$prefix" \
+    --enable-static \
+    --disable-shared \
+    --enable-extra-encodings
+  make -j2
+  make install
+)
 
 libffi_source="$sources/libffi-3.8.0"
 (
