@@ -1,16 +1,18 @@
 # Android QEMU integration
 
-Status: CI has built and packaged QEMU 11.1.2 for Android arm64-v8a. Android-side execution, guest boot, and service integration are unverified, so the VM service remains fail-closed.
+Status: Android ARM64 QEMU and Alpine guest assets are built and packaged. The app-private installer is unit-tested. Android-side QEMU execution, guest boot, and service integration remain unverified; the VM service remains fail-closed.
 
 ## Verified build and package boundary
 
-CI run #120 passed the pinned source fetch, Android ARM64 cross-build, APK assembly, executable-entry check, QMP instrumentation, and host Alpine guest gates.
+CI run #125 passed the pinned QEMU source fetch, Android ARM64 cross-build, APK assembly, native dependency audit, QMP instrumentation, and host Alpine guest gates.
 
-The cross-build downloads QEMU 11.1.2 from the pinned upstream archive and verifies SHA-256 731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016. It builds checksum-pinned libiconv, libffi, PCRE2, GLib, pixman, and libslirp static dependencies. A small Bionic compatibility shim provides QEMU's temporary POSIX shared-memory file descriptor using an immediately unlinked file in its working directory.
+The cross-build downloads QEMU 11.1.2 from the pinned upstream archive and verifies SHA-256 `731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016`. It builds checksum-pinned libiconv, libffi, PCRE2, GLib, pixman, and libslirp static dependencies. A Bionic compatibility shim provides QEMU's temporary POSIX shared-memory file descriptor using an immediately unlinked file in its working directory.
 
-The result is an Android AArch64 PIE staged as lib/arm64-v8a/libqemu-system-aarch64.so for APK extraction. The build checks ELF machine, PIE type, /system/bin/linker64, and absence of RPATH/RUNPATH. Run #120 confirms APK presence. This revision adds a complete APK audit for the QEMU ELF and runtime dependencies.
+The APK contains an Android AArch64 PIE staged as `lib/arm64-v8a/libqemu-system-aarch64.so`. CI checks ELF machine, PIE type, `/system/bin/linker64`, required system libraries, and absence of RPATH/RUNPATH.
 
-These checks prove build and packaging only. The CI emulator is x86_64 and cannot execute the ARM64 QEMU binary. No ARM64 device test or Android guest boot has been performed.
+The APK also contains the Alpine `vmlinuz-virt`, matching `initramfs-virt`, gzip-compressed ext4 seed disk, and SHA-256 manifest. `GuestAssetInstaller` verifies those hashes, stores versioned boot assets under app-private storage, atomically expands and validates the ext4 seed disk, and does not replace an existing disk on repeat install. JVM unit tests verify successful initialization, repeat-install preservation, and rejection of a boot asset hash mismatch.
+
+These checks prove cross-build, packaging, and installer behavior only. The CI emulator is x86_64 and cannot execute ARM64 QEMU. No ARM64 device test or Android guest boot has been performed.
 
 ## Existing Android boundary tests
 
@@ -22,17 +24,16 @@ These checks prove build and packaging only. The CI emulator is x86_64 and canno
 
 ## Runtime integration constraints
 
-The Android service must run in the dedicated :vm process as a foreground service while the guest is active; launch QEMU from the APK-extracted native-library directory; use app-private working storage for temporary files and the guest disk; keep serial and diagnostics separate; request graceful QMP shutdown before bounded force termination; and keep localhost forwarding bound to loopback by default.
+The service must run in the dedicated `:vm` process as a foreground service while the guest is active; launch QEMU from the APK-extracted native-library directory; use app-private working storage and the persistent guest disk; keep serial and diagnostics separate; request graceful QMP shutdown before bounded force termination; and keep localhost forwarding bound to loopback by default.
 
-The current launch specification accepts kernel, initramfs, and disk paths, but Android does not yet package or manage those assets. The service intentionally fails closed.
+The launch specification accepts kernel, initramfs, and disk paths. The installer now supplies verified paths, but no service consumes them yet. QEMU must remain disabled until ARM64 Android execution and guest readiness are verified.
 
 ## Next proof gates
 
-1. Pass the expanded APK ELF and runtime dependency audit.
-2. Run QEMU on ARM64 Android and capture version/help output and diagnostics.
-3. Package an Alpine kernel, initramfs, and writable ext4 disk; boot to a readiness signal.
-4. Bridge the serial console, verify login and package installation, and confirm disk persistence.
-5. Request QMP shutdown from ServerService and verify QEMU exits before releasing disk resources.
-6. Test physical ARM64 devices and record boot time, memory, battery impact, and native crash diagnostics.
+1. Run QEMU on ARM64 Android and capture version/help output and diagnostics.
+2. Boot the packaged Alpine kernel/initramfs and reach a real guest readiness signal.
+3. Bridge the serial console, verify login and package installation, and confirm disk persistence.
+4. Request QMP shutdown from ServerService and verify QEMU exits before releasing disk resources.
+5. Enforce session timer and battery policy, then test physical ARM64 devices and record boot time, memory, battery impact, and crash diagnostics.
 
 Until ARM64 execution and guest boot pass, PocketOS must describe Android Linux startup as unimplemented.
