@@ -5,7 +5,10 @@ set -euo pipefail
 OUT="${1:-$PWD/out/alpine-aarch64.ext4}"
 SIZE_MB="${SIZE_MB:-512}"
 ALPINE_TAG="${ALPINE_TAG:-3.22}"
-[[ "$SIZE_MB" =~ ^[0-9]+$ ]] && (( SIZE_MB >= 256 )) || { echo "SIZE_MB must be >= 256" >&2; exit 2; }
+if [[ ! "$SIZE_MB" =~ ^[0-9]+$ ]] || (( SIZE_MB < 256 )); then
+  echo "SIZE_MB must be an integer >= 256" >&2
+  exit 2
+fi
 command -v docker >/dev/null || { echo "Docker is required" >&2; exit 2; }
 mkdir -p "$(dirname "$OUT")"
 OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
