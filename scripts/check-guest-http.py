@@ -94,7 +94,7 @@ def send_checked(
     second = success[midpoint:].decode("ascii")
     payload = (
         f"{command}; result=$?; "
-        f"printf '%s%s:%s\\\\n' '{first}' '{second}' \"$result\"\\n"
+        f"printf '%s%s:%s\\\\n' '{first}' '{second}' \"$result\"\n"
     )
     os.write(master_fd, payload.encode())
     status_marker = success + b":"
