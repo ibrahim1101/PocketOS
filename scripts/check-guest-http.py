@@ -179,7 +179,8 @@ def main() -> int:
             "busybox httpd -f -p 8080 -h /tmp/pocketos-www "
             ">/tmp/pocketos-httpd.log 2>&1 & "
             "echo $! >/tmp/pocketos-httpd.pid; sleep 1; "
-            "kill -0 \"$(cat /tmp/pocketos-httpd.pid)\""
+            "if ! kill -0 \"$(cat /tmp/pocketos-httpd.pid)\"; then "
+            "cat /tmp/pocketos-httpd.log; exit 1; fi"
         )
         send_checked(process, master_fd, buffer, start_server, SERVER_STARTED, args.timeout)
 
