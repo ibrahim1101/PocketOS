@@ -81,6 +81,13 @@ def read_until(
                 buffer.extend(chunk)
 
 
+def marker_command(token: bytes) -> str:
+    midpoint = len(token) // 2
+    first = token[:midpoint].decode("ascii")
+    second = token[midpoint:].decode("ascii")
+    return "printf '%s%s\\\\n' '" + first + "' '" + second + "'"
+
+
 def send_checked(
     process: subprocess.Popen[bytes],
     master_fd: int,
@@ -90,14 +97,16 @@ def send_checked(
     timeout: int,
 ) -> None:
     failure = b"__POCKETOS_GUEST_COMMAND_FAILED__"
-    payload = f"if {command}; then echo {success.decode()}; else echo {failure.decode()}; fi\n"
+    payload = (
+        f"if {command}; then {marker_command(success)}; "
+        f"else {marker_command(failure)}; fi\\n"
+    )
     os.write(master_fd, payload.encode())
     observed = read_until(
         process, master_fd, buffer, (success, failure), time.monotonic() + timeout
     )
     if observed == failure:
         raise RuntimeError(f"guest setup command failed: {command}")
-
 
 def stop(process: subprocess.Popen[bytes], master_fd: int) -> None:
     try:
