@@ -27,7 +27,7 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   mkdir -p /guest/etc/apk/keys /guest/etc/network /guest/etc/runlevels/default /guest/etc/runlevels/boot /guest/etc/runlevels/sysinit
   cp /etc/apk/keys/* /guest/etc/apk/keys/
   printf "https://dl-cdn.alpinelinux.org/alpine/%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/%s/community\n" "$ALPINE_REPOSITORY_BRANCH" "$ALPINE_REPOSITORY_BRANCH" > /guest/etc/apk/repositories
-  apk --root /guest --initdb --arch aarch64 add --no-cache alpine-base openrc busybox-initscripts util-linux
+  apk --root /guest --initdb --arch aarch64 add --no-cache alpine-base openrc busybox-openrc util-linux
   printf "pocketos\n" > /guest/etc/hostname
   printf "auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet dhcp\n" > /guest/etc/network/interfaces
   printf "ttyAMA0::respawn:/sbin/getty -L 115200 ttyAMA0 vt100\n" >> /guest/etc/inittab
