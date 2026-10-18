@@ -128,7 +128,7 @@ def main() -> int:
         args.rootfs,
         args.timeout,
         (
-            f"mkdir -p /var/lib/pocketos && printf '%s\n' '{MARKER_VALUE}' > {MARKER_PATH} "
+            f"mkdir -p /var/lib/pocketos && printf '%s\\n' '{MARKER_VALUE}' > {MARKER_PATH} "
             f"&& sync && echo {write_done.decode()} && poweroff -f\n"
         ).encode(),
         write_done,
