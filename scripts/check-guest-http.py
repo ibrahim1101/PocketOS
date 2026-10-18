@@ -15,7 +15,7 @@ import urllib.request
 
 HOST_PORT = 18080
 GUEST_PORT = 8080
-HTTP_BODY = b"PocketOS HTTP forwarding works\\n"
+HTTP_BODY = b"PocketOS HTTP forwarding works\n"
 SHELL_PROMPT = b"~ # "
 SERVER_STARTED = b"__POCKETOS_HTTP_SERVER_STARTED__"
 
@@ -90,7 +90,7 @@ def send_checked(
     timeout: int,
 ) -> None:
     failure = b"__POCKETOS_GUEST_COMMAND_FAILED__"
-    payload = f"if {command}; then echo {success.decode()}; else echo {failure.decode()}; fi\\n"
+    payload = f"if {command}; then echo {success.decode()}; else echo {failure.decode()}; fi\n"
     os.write(master_fd, payload.encode())
     observed = read_until(
         process, master_fd, buffer, (success, failure), time.monotonic() + timeout
@@ -133,7 +133,7 @@ def main() -> int:
         send_checked(
             process, master_fd, buffer,
             "mount -o remount,rw / && mkdir -p /tmp/pocketos-www "
-            "&& printf 'PocketOS HTTP forwarding works\\\\n' > /tmp/pocketos-www/index.html",
+            "&& printf 'PocketOS HTTP forwarding works\\n' > /tmp/pocketos-www/index.html",
             b"__POCKETOS_HTTP_CONTENT_READY__", args.timeout,
         )
         send_checked(
