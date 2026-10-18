@@ -1,7 +1,7 @@
 package com.pocketos.app
 
 import android.net.LocalServerSocket
-import android.net.LocalSocket
+import android.net.LocalSocketAddress
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
