@@ -7,8 +7,9 @@ Updated: 2026-10-18
 - Active milestone: M2 — Android-native QEMU integration investigation.
 - Active development branch: `feat/m1-linux-boot`.
 - Pull request: [#1 — M1: Start Alpine ARM64 guest image builder](https://github.com/ibrahim1101/PocketOS/pull/1) (open).
-- Latest verified code revision: `3183c262e304603e54909f643f88c2da922739ee`.
+- Latest verified code revision: `f95d9af7425d9720c3c7393eba2ff53ce93f162d`.
 - CI run [#93](https://github.com/ibrahim1101/PocketOS/actions/runs/39149791305) passed Android unit tests, APK assembly, JNI instrumentation on an x86_64 emulator, ELF ABI and dependency checks for both packaged native libraries, and all Alpine ARM64 guest checks: serial boot, Linux shell commands, ext4 persistence across a fresh QEMU process, and localhost HTTP forwarding. The HTTP test confirmed QEMU listens only on host `127.0.0.1:18080` and serves the expected response from guest port 8080. The JNI libraries depend on `libm.so`, `libdl.so`, and `libc.so`, with no RPATH or RUNPATH.
+- CI run [#95](https://github.com/ibrahim1101/PocketOS/actions/runs/39153381185) passed on the current revision. It reran Android unit tests, APK assembly, x86_64 emulator JNI instrumentation and ELF checks, plus the ARM64 Alpine build, boot, shell, ext4 persistence, and localhost forwarding gates.
 - The instrumentation test installed the app and test APK on the emulator and confirmed the embedded native library loads and returns `JNI_BRIDGE_READY;QEMU_NOT_LINKED`. This validates the JNI packaging boundary only; it does not run QEMU.
 - The APK audit extracts the JNI libraries and confirms their ELF machines are `AArch64` and `Advanced Micro Devices X86-64`.
 - CI built the ext4 image, extracted the matching kernel and initramfs, booted them with system QEMU, mounted the VirtIO ext4 disk, and observed the `pocketos login:` prompt on PL011 serial.
@@ -20,6 +21,7 @@ Updated: 2026-10-18
 - Android activity displays development status and explicitly says the VM engine is not implemented.
 - Pure Kotlin VM lifecycle state machine accepts only valid transitions, prevents duplicate start transitions, and does not mark the guest running until its readiness transition; unit tests cover normal boot/stop, failures/recovery, startup cancellation, and concurrent starts.
 - Android NDK/CMake configuration packages a JNI smoke library for `arm64-v8a` and `x86_64`. It deliberately reports `QEMU_NOT_LINKED`; it does not start a VM.
+- `scripts/fetch-android-qemu-source.sh` downloads the pinned QEMU 11.1.2 source archive, verifies its SHA-256, validates the archive layout, and extracts it without overwriting an existing destination. CI ShellCheck passes; this fetch step does not build or link Android QEMU.
 - AndroidX instrumentation test loads and calls the JNI library on the x86_64 emulator.
 - CI extracts the debug APK native libraries and verifies both ELF machine types with the NDK `llvm-readelf`.
 - CI extracts the debug APK native libraries, verifies both ELF machine types, and audits `DT_NEEDED` plus runtime search paths. The current smoke libraries have only Android system dependencies (`libm.so`, `libdl.so`, `libc.so`) and no RPATH/RUNPATH; this does not yet validate a QEMU library.
