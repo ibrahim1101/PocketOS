@@ -1,9 +1,14 @@
 package com.pocketos.app
 
-import android.test.InstrumentationTestCase
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertEquals
+import org.junit.Test
+import org.junit.runner.RunWith
 
-class NativeVmBridgeInstrumentationTest : InstrumentationTestCase() {
-    fun testEmbeddedNativeBridgeLoads() {
+@RunWith(AndroidJUnit4::class)
+class NativeVmBridgeInstrumentationTest {
+    @Test
+    fun embeddedNativeBridgeLoads() {
         assertEquals("JNI_BRIDGE_READY;QEMU_NOT_LINKED", NativeVmBridge.status())
     }
 }
