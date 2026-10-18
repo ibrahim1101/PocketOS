@@ -2,9 +2,9 @@
 # Boot the Alpine disk under QEMU and require its serial login prompt.
 set -euo pipefail
 : "${KERNEL:?Set KERNEL to the ARM64 Linux Image extracted from the guest disk}"
-: "${ROOTFS:?Set ROOTFS to the Alpine ARM64 ext4 disk image}"
+: "${ROOTFS:?Set ROOTFS to the Alpine ARM64 ext4 disk image}": "${INITRAMFS:?Set INITRAMFS to the matching Alpine initramfs image}"
 BOOT_TIMEOUT_SECONDS="${BOOT_TIMEOUT_SECONDS:-120}"
-for path in "$KERNEL" "$ROOTFS"; do
+for path in "$KERNEL" "$INITRAMFS" "$ROOTFS"; do
   [[ -f "$path" ]] || { echo "Missing file: $path" >&2; exit 2; }
 done
 command -v qemu-system-aarch64 >/dev/null || { echo "qemu-system-aarch64 is required" >&2; exit 2; }
