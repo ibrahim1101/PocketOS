@@ -35,18 +35,25 @@ jobs:
       - name: Run unit tests and assemble debug APK
         run: gradle -p android testDebugUnitTest assembleDebug
 
-  guest-builder:
-    name: Guest builder checks
+  guest-boot:
+    name: Alpine ARM64 guest build and boot
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - name: Install image inspection tools
-        run: sudo apt-get update && sudo apt-get install -y e2fsprogs shellcheck
+      - name: Install QEMU and validation tools
+        run: sudo apt-get update && sudo apt-get install -y e2fsprogs qemu-system-arm shellcheck
       - name: Check shell scripts
         run: |
           bash -n scripts/*.sh
           shellcheck scripts/*.sh
-      - name: Build a minimal ARM64 Alpine disk
-        run: SIZE_MB=256 bash scripts/build-alpine-rootfs.sh "$RUNNER_TEMP/alpine-aarch64.ext4"
+      - name: Build an ARM64 Alpine disk
+        run: SIZE_MB=512 bash scripts/build-alpine-rootfs.sh "$RUNNER_TEMP/alpine-aarch64.ext4"
+      - name: Extract Alpine's QEMU virtual kernel
+        run: debugfs -R "dump /boot/vmlinuz-virt $RUNNER_TEMP/vmlinuz-virt" "$RUNNER_TEMP/alpine-aarch64.ext4"
+      - name: Boot guest to serial login prompt
+        env:
+          KERNEL: ${{ runner.temp }}/vmlinuz-virt
+          ROOTFS: ${{ runner.temp }}/alpine-aarch64.ext4
+          BOOT_TIMEOUT_SECONDS: "120"
+        run: bash scripts/check-guest-boot.sh
