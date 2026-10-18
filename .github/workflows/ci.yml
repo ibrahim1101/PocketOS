@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -33,7 +34,7 @@ jobs:
       - name: Install Android QEMU cross-build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake bison flex libtool ninja-build pkg-config
+          sudo apt-get install -y autoconf automake bison e2fsprogs flex libtool ninja-build pkg-config
           python3 -m venv "$RUNNER_TEMP/qemu-build-venv"
           "$RUNNER_TEMP/qemu-build-venv/bin/pip" install "meson==1.7.0"
           echo "$RUNNER_TEMP/qemu-build-venv/bin" >> "$GITHUB_PATH"
@@ -53,6 +54,12 @@ jobs:
             "$RUNNER_TEMP/qemu-11.1.2" \
             android/app/src/debug/jniLibs \
             "$RUNNER_TEMP/android-qemu-build"
+      - name: Build and package Alpine Android guest assets
+        run: |
+          SIZE_MB=256 bash scripts/build-alpine-rootfs.sh "$RUNNER_TEMP/pocketos-guest.ext4"
+          bash scripts/package-android-guest-assets.sh \
+            "$RUNNER_TEMP/pocketos-guest.ext4" \
+            android/app/src/main/assets/pocketos
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
@@ -95,6 +102,10 @@ jobs:
           unzip -l "$apk" | grep -F "lib/x86_64/libpocketos_exec_probe.so"
           unzip -l "$apk" | grep -F "lib/arm64-v8a/libpocketos_exec_probe.so"
           unzip -l "$apk" | grep -F "lib/arm64-v8a/libqemu-system-aarch64.so"
+          unzip -l "$apk" | grep -F "assets/pocketos/vmlinuz-virt"
+          unzip -l "$apk" | grep -F "assets/pocketos/initramfs-virt"
+          unzip -l "$apk" | grep -F "assets/pocketos/rootfs.ext4.gz"
+          unzip -l "$apk" | grep -F "assets/pocketos/assets.sha256"
       - name: Run Android native bridge instrumentation tests
         run: |
           gradle -p android connectedDebugAndroidTest
