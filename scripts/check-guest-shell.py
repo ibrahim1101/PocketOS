@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import pty
 import select
 import subprocess
 import sys
 import time
-import pty
 
 
 def main() -> int:
@@ -74,19 +74,24 @@ def main() -> int:
             if not command_sent and b"Run /bin/sh as init process" in buffer:
                 os.write(
                     master_fd,
-                    b"echo __POCKETOS_TEST_BEGIN__\nuname -a\ncat /etc/alpine-release\necho __POCKETOS_TEST_DONE__\n",
+                    b"echo __POCKETOS_UNAME_BEGIN__\nuname -s\necho __POCKETOS_UNAME_DONE__\ncat /etc/alpine-release\necho __POCKETOS_TEST_DONE__\n",
                 )
                 command_sent = True
 
         output = buffer.decode("utf-8", errors="replace")
-        if "Linux " not in output or "__POCKETOS_TEST_BEGIN__" not in output:
-            raise RuntimeError(f"guest command output was incomplete:\\n{output[-4000:]}")
+        uname_begin = "__POCKETOS_UNAME_BEGIN__"
+        uname_end = "__POCKETOS_UNAME_DONE__"
+        start = output.rfind(uname_begin)
+        end = output.find(uname_end, start + len(uname_begin)) if start >= 0 else -1
+        uname_output = output[start + len(uname_begin):end] if start >= 0 and end >= 0 else ""
+        if "Linux" not in [line.strip() for line in uname_output.splitlines()]:
+            raise RuntimeError(f"guest uname command did not return Linux:\n{output[-4000:]}")
         release = next(
             (line.strip() for line in output.splitlines() if line.strip().startswith("3.")),
             None,
         )
         if release is None:
-            raise RuntimeError(f"Alpine release was not printed:\\n{output[-4000:]}")
+            raise RuntimeError(f"Alpine release was not printed:\n{output[-4000:]}")
         print(f"Guest uname succeeded; Alpine release: {release}")
         return 0
     except (RuntimeError, TimeoutError) as exc:
