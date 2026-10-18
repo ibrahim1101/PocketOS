@@ -56,7 +56,7 @@ From Android Studio, open the repository's `android/` project. This starter does
 1. Alpine disk image successfully created.
 2. ARM64 Linux kernel boots through host-side QEMU into a serial login prompt.
 3. CI writes a marker to the ext4 guest disk, powers Alpine off, restarts QEMU with the same disk, and verifies the marker survives.
-4. CI starts Alpine's `busybox-extras httpd` inside the guest and verifies its exact response through a host forward bound to `127.0.0.1:18080` and guest port 8080. The local `scripts/boot-guest.sh` example maps host `127.0.0.1:8080` to guest port 8080.
+4. CI starts Alpine's `busybox-extras httpd` inside the guest, checks the QEMU listener is bound only to `127.0.0.1:18080`, and verifies the exact response from guest port 8080. The local `scripts/boot-guest.sh` example maps host `127.0.0.1:8080` to guest port 8080.
 5. Android APK builds and launches in the emulator.
 6. Android lifecycle and widget behaviors pass tests.
 7. Actual native Android QEMU integration is tested separately.
