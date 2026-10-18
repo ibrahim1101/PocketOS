@@ -7,19 +7,19 @@ Updated: 2026-10-18
 - Active milestone: M2 — Android-native QEMU integration investigation.
 - Active development branch: `feat/m1-linux-boot`.
 - Pull request: [#1 — M1: Start Alpine ARM64 guest image builder](https://github.com/ibrahim1101/PocketOS/pull/1) (open).
-- Latest source revision: `66f33983c8ed533a4d98bff06c037319cfbdc634`.
-- Current CI run [#50](https://github.com/ibrahim1101/PocketOS/actions/runs/39139206276) is pending. Its Android job is intended to install the APK and run the JNI instrumentation test; it has not passed yet.
-- The earlier CI run [#39](https://github.com/ibrahim1101/PocketOS/actions/runs/39138074110) passed Android unit tests/debug APK assembly, serial boot, and the guest command probe, before the Android NDK bridge was added.
+- Latest verified code revision: `7e1c5d994d871d9550e3ac334889d26c1932b76b`.
+- CI run [#56](https://github.com/ibrahim1101/PocketOS/actions/runs/39140275405) passed Android unit tests, APK assembly, JNI instrumentation on an x86_64 emulator, and the Alpine ARM64 guest boot and command probe.
+- The instrumentation test installed the app and test APK on the emulator and confirmed the embedded native library loads and returns `JNI_BRIDGE_READY;QEMU_NOT_LINKED`. This validates the JNI packaging boundary only; it does not run QEMU.
 - CI built the ext4 image, extracted the matching kernel and initramfs, booted them with system QEMU, mounted the VirtIO ext4 disk, and observed the `pocketos login:` prompt on PL011 serial.
 - A separate test boot overrides init with `/bin/sh`; it waits for the guest shell prompt, runs `uname -s`, and reads `/etc/alpine-release` (`3.22.6`). This verifies guest command execution without enabling the locked root account for a normal boot.
-- The APK has not yet been confirmed installed and exercised on an emulator or device.
+- The debug APK and JNI library have been tested on an x86_64 Android emulator; no physical ARM64 device test has been performed.
 
-## Implemented
+## Implemented and verified
 
 - Android activity displays development status and explicitly says the VM engine is not implemented.
 - Pure Kotlin VM lifecycle state machine accepts only valid transitions, prevents duplicate start transitions, and does not mark the guest running until its readiness transition; unit tests cover normal boot/stop, failures/recovery, startup cancellation, and concurrent starts.
-- Android NDK/CMake configuration packages a JNI smoke library for `arm64-v8a` and `x86_64`. It reports `QEMU_NOT_LINKED`; this is only a bridge test and does not start a VM.
-- An Android instrumentation test checks loading and calling that JNI library. Its emulator CI run is pending.
+- Android NDK/CMake configuration packages a JNI smoke library for `arm64-v8a` and `x86_64`. It deliberately reports `QEMU_NOT_LINKED`; it does not start a VM.
+- AndroidX instrumentation test loads and calls the JNI library on the x86_64 emulator.
 - Foreground service fails closed and does not launch a guest.
 - Widget opens the activity; it does not start or stop a VM.
 - Pure Kotlin session policy defines a 60-minute limit and a 20% battery threshold. Unit tests pass, but no service enforces the policy.
@@ -31,7 +31,6 @@ Updated: 2026-10-18
 ## Outstanding gaps
 
 - No Android-compatible QEMU executable, native process supervisor, serial bridge, or integrated terminal exists. Android packaging constraints and the first native integration proof gates are documented in [ANDROID_QEMU_INTEGRATION.md](ANDROID_QEMU_INTEGRATION.md).
-- The Android JNI smoke test has not yet passed in CI.
 - Normal interactive login with a configured guest account and package installation remain unverified; only `uname -s` and reading `/etc/alpine-release` have been exercised in the temporary test shell.
 - No clean shutdown, persistence-across-restart, or HTTP forwarding smoke test exists.
 - Android lifecycle, widget actions, timer enforcement, battery response, notifications, and recovery are not implemented.
@@ -45,14 +44,13 @@ Updated: 2026-10-18
 - Replaced the unavailable `busybox-initscripts` package with Alpine's `busybox-openrc`.
 - Added `linux-virt`, its initramfs, and `rootfstype=ext4` to the host boot path.
 - Assigned the generated disk to the invoking host user so QEMU can open it.
-- Added Android SDK tools to the emulator `PATH`.
+- Added Android SDK tools to the emulator `PATH`, pinned `ANDROID_AVD_HOME`, and granted the hosted runner access to `/dev/kvm`.
 - Bounded emulator discovery and boot waits so failures print diagnostics rather than leaving the step blocked indefinitely.
 
 ## Next engineering tasks
 
-1. Finish the Android emulator JNI smoke test and debug APK build.
-2. Build a pinned Android NDK QEMU `aarch64-softmmu` artifact with only the required headless dependencies; verify its ABI and linkage.
-3. Prove a JNI entry point can start, supervise, and stop the QEMU main loop inside a dedicated Android process.
-4. Install on an ARM64 Android emulator/device and boot Alpine through the Android native engine.
-5. Add safe first-run guest account setup, then test package installation and persistent restart behavior.
-6. Verify localhost HTTP forwarding from a real guest service.
+1. Build a pinned Android NDK QEMU `aarch64-softmmu` artifact with only the required headless dependencies; verify its ABI and linkage.
+2. Prove a JNI entry point can start, supervise, and stop the QEMU main loop inside a dedicated Android process.
+3. Install on an ARM64 Android device and boot Alpine through the Android native engine.
+4. Add safe first-run guest account setup, then test package installation and persistent restart behavior.
+5. Verify localhost HTTP forwarding from a real guest service.
