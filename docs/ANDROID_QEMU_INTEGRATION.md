@@ -1,6 +1,6 @@
 # Android QEMU integration
 
-Status: investigation only. No Android-native QEMU binary has been built or run by PocketOS.
+Status: QEMU integration remains investigation only. CI has verified that PocketOS can package and launch a small Android PIE executable from its installed native-library directory on an x86_64 emulator; no QEMU binary has been built or run by PocketOS.
 
 ## Evidence and constraints
 
@@ -9,7 +9,7 @@ Status: investigation only. No Android-native QEMU binary has been built or run 
 - For apps targeting Android 10 or later, Android blocks `execve()` of files inside the writable app home directory and advises loading code embedded in the APK: [Android 10 behavior changes](https://developer.android.com/about/versions/10/behavior-changes-10).
 - Android's NDK packages native libraries by ABI inside the app package: [Android ABIs](https://developer.android.com/ndk/guides/abis).
 
-These points show that Android ARM64 QEMU builds are possible in a Termux environment, but a Termux executable cannot be copied into PocketOS's files directory and launched with `ProcessBuilder`. The host-side QEMU boot test is separate evidence and does not establish Android compatibility.
+These points show that Android ARM64 QEMU builds are possible in a Termux environment, but a Termux executable cannot simply be copied into PocketOS's writable files directory and launched with `ProcessBuilder`. CI run [#105](https://github.com/ibrahim1101/PocketOS/actions/runs/39157789567) now proves a separately built PIE executable packaged as an APK native library can be launched from the installed native-library directory on an Android x86_64 emulator. This does not establish QEMU compatibility, ARM64-device execution, or guest boot on Android.
 
 ## Android build reference snapshot
 
@@ -27,17 +27,17 @@ The next build spike should start from the pinned upstream release and explicitl
 
 ## First integration spike
 
-Test a PocketOS-owned Android NDK build for `aarch64-softmmu` and package the result as code embedded in the APK. The first spike must establish how the QEMU main loop can be safely entered and stopped from a JNI-loaded native library. It must not assume that calling an unmodified command-line `main()` from JNI is safe.
+Test a PocketOS-owned Android NDK build of QEMU `aarch64-softmmu` as a headless PIE executable and package it as a native library in the APK. Launch and supervise it as a child process of the dedicated `:vm` service; do not call an unmodified command-line `main()` from JNI. Keep an alternate JNI integration only if Android-specific process behavior or QEMU lifecycle constraints require it.
 
 The manifest now assigns `ServerService` to the app's dedicated `:vm` process, and emulator instrumentation verifies the resolved process name. The service still fails closed and does not load or start QEMU. Keep VM execution in this dedicated Android process so native failures do not take down the dashboard process. Expose a narrow host API for start, readiness, graceful stop, force-stop, and diagnostics. Use a serial byte channel between the VM process and the Android terminal; use QMP or another documented QEMU control channel for shutdown. Keep guest disks under app-private persistent storage and never execute copied guest or QEMU binaries from that storage.
 
 ## Proof gates
 
-1. Build a pinned QEMU source revision for Android `arm64-v8a` with only required headless dependencies.
-2. Verify the output's ABI and dynamic dependencies; reject Termux-prefix paths and unresolved libraries.
-3. Install the APK on an ARM64 Android emulator or device and load the embedded native code.
+1. Build pinned QEMU 11.1.2 for Android `arm64-v8a` with only required headless dependencies.
+2. Verify the output ABI and dynamic dependencies; reject Termux-prefix paths and unresolved libraries.
+3. Package the executable in the APK native-library directory and launch it under `:vm` on an ARM64 Android device.
 4. Start the Alpine guest and observe a readiness signal from its serial output.
-5. Exchange bytes with the guest console, request graceful shutdown, and verify the VM process exits.
+5. Bridge terminal bytes, request graceful shutdown, and verify the VM process exits.
 6. Repeat on supported Android API levels and record cold boot time, memory, and native crash diagnostics.
 
 Until these gates pass, PocketOS must keep Android VM startup disabled and must describe the QEMU integration as unimplemented.

@@ -7,12 +7,13 @@ Updated: 2026-10-18
 - Active milestone: M2 — Android-native QEMU integration investigation.
 - Active development branch: `feat/m1-linux-boot`.
 - Pull request: [#1 — M1: Start Alpine ARM64 guest image builder](https://github.com/ibrahim1101/PocketOS/pull/1) (open).
-- Latest verified code revision: `11e957a27c88290a1eb86dd618ad22f7d0039d14`.
+- Latest verified code revision: `304f97d81edf512cc8019144eaa87e39b2366656`.
 - CI run [#93](https://github.com/ibrahim1101/PocketOS/actions/runs/39149791305) passed Android unit tests, APK assembly, JNI instrumentation on an x86_64 emulator, ELF ABI and dependency checks for both packaged native libraries, and all Alpine ARM64 guest checks: serial boot, Linux shell commands, ext4 persistence across a fresh QEMU process, and localhost HTTP forwarding. The HTTP test confirmed QEMU listens only on host `127.0.0.1:18080` and serves the expected response from guest port 8080. The JNI libraries depend on `libm.so`, `libdl.so`, and `libc.so`, with no RPATH or RUNPATH.
 - CI run [#95](https://github.com/ibrahim1101/PocketOS/actions/runs/39153381185) passed on the current revision. It reran Android unit tests, APK assembly, x86_64 emulator JNI instrumentation and ELF checks, plus the ARM64 Alpine build, boot, shell, ext4 persistence, and localhost forwarding gates.
 - CI run [#98](https://github.com/ibrahim1101/PocketOS/actions/runs/39154199895) passed on the current revision, including an actual download of the pinned QEMU 11.1.2 archive, SHA-256 verification, safe extraction, and configure-script check, along with both Android and Alpine guest jobs.
-- CI run [#100](https://github.com/ibrahim1101/PocketOS/actions/runs/39155206068) passed on the current revision. In addition to the Android and Alpine gates, emulator instrumentation verified that `ServerService` runs as `com.pocketos.app:vm`.
-- The instrumentation test installed the app and test APK on the emulator and confirmed the embedded native library loads and returns `JNI_BRIDGE_READY;QEMU_NOT_LINKED`. This validates the JNI packaging boundary only; it does not run QEMU.
+- CI run [#100](https://github.com/ibrahim1101/PocketOS/actions/runs/39155206068) passed on its revision. In addition to the Android and Alpine gates, emulator instrumentation verified that `ServerService` runs as `com.pocketos.app:vm`.
+- CI run [#105](https://github.com/ibrahim1101/PocketOS/actions/runs/39157789567) passed Android and Alpine guest gates. Android CI built PIE executable probes for `arm64-v8a` and `x86_64`, packaged them in the app APK, and emulator instrumentation launched the x86_64 probe from the installed app's native-library directory and verified its exit code and output.
+- Instrumentation confirms the embedded JNI library loads and returns `JNI_BRIDGE_READY;QEMU_NOT_LINKED`. It also confirms an APK-packaged PIE executable can be launched from the installed native-library directory on an Android x86_64 emulator. These are packaging and process-launch proofs only; CI does not run QEMU on Android.
 - The APK audit extracts the JNI libraries and confirms their ELF machines are `AArch64` and `Advanced Micro Devices X86-64`.
 - CI built the ext4 image, extracted the matching kernel and initramfs, booted them with system QEMU, mounted the VirtIO ext4 disk, and observed the `pocketos login:` prompt on PL011 serial.
 - A separate test boot overrides init with `/bin/sh`; it waits for the guest shell prompt, runs `uname -s`, and reads `/etc/alpine-release` (`3.22.6`). This verifies guest command execution without enabling the locked root account for a normal boot.
@@ -24,7 +25,7 @@ Updated: 2026-10-18
 - Pure Kotlin VM lifecycle state machine accepts only valid transitions, prevents duplicate start transitions, and does not mark the guest running until its readiness transition; unit tests cover normal boot/stop, failures/recovery, startup cancellation, and concurrent starts.
 - Android NDK/CMake configuration packages a JNI smoke library for `arm64-v8a` and `x86_64`. It deliberately reports `QEMU_NOT_LINKED`; it does not start a VM.
 - `scripts/fetch-android-qemu-source.sh` downloads the pinned QEMU 11.1.2 source archive, verifies its SHA-256, validates the archive layout, and extracts it without overwriting an existing destination. CI runs this fetch step and checks the extracted configure script; this fetch step does not build or link Android QEMU.
-- AndroidX instrumentation test loads and calls the JNI library on the x86_64 emulator.
+- AndroidX instrumentation loads and calls the JNI library and starts the packaged x86_64 executable probe on an x86_64 emulator.
 - CI extracts the debug APK native libraries and verifies both ELF machine types with the NDK `llvm-readelf`.
 - CI extracts the debug APK native libraries, verifies both ELF machine types, and audits `DT_NEEDED` plus runtime search paths. The current smoke libraries have only Android system dependencies (`libm.so`, `libdl.so`, `libc.so`) and no RPATH/RUNPATH; this does not yet validate a QEMU library.
 - Foreground service fails closed and does not launch a guest.
@@ -41,7 +42,7 @@ Updated: 2026-10-18
 
 ## Outstanding gaps
 
-- No Android-compatible QEMU executable, native process supervisor, serial bridge, or integrated terminal exists. Android packaging constraints, the pinned Termux QEMU 11.1.2 compatibility reference, and the next JNI-native build proof gates are documented in [ANDROID_QEMU_INTEGRATION.md](ANDROID_QEMU_INTEGRATION.md).
+- No Android-compatible QEMU executable, process supervisor, serial bridge, or integrated terminal exists. APK-native-library process launch is proven on the x86_64 emulator; QEMU cross-compilation, Android ARM64 execution, and VM supervision are still unverified. The build investigation and proof gates are documented in [ANDROID_QEMU_INTEGRATION.md](ANDROID_QEMU_INTEGRATION.md).
 - Normal interactive login with a configured guest account and package installation remain unverified; only `uname -s` and reading `/etc/alpine-release` have been exercised in the temporary test shell.
 - Host-side CI verifies guest poweroff and ext4 persistence across a QEMU restart, plus localhost HTTP forwarding from a guest service. Android VM process shutdown and Android-side localhost forwarding remain unverified.
 - Android lifecycle, widget actions, timer enforcement, battery response, notifications, and recovery are not implemented.
@@ -61,7 +62,7 @@ Updated: 2026-10-18
 
 ## Next engineering tasks
 
-1. Build a pinned Android NDK QEMU `aarch64-softmmu` shared-library artifact using the minimal required headless devices and compatibility patches; verify its ABI and dynamic dependencies.
-2. Prove a JNI entry point can start, supervise, and stop the QEMU main loop inside a dedicated Android process.
+1. Build pinned QEMU 11.1.2 for Android `arm64-v8a` with the minimal required headless devices and dependencies; verify its ABI and dynamic dependencies. Test a packaged executable launched from the app's native-library directory, using the dedicated `:vm` service process as supervisor.
+2. Boot Alpine Android-side, bridge its serial console to the terminal, detect readiness, and prove graceful shutdown and forced recovery.
 3. Install on an ARM64 Android device and boot Alpine through the Android native engine.
 4. Add safe first-run guest account setup, then test interactive login and package installation; verify disk persistence through the Android VM lifecycle.
