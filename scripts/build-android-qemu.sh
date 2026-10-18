@@ -14,7 +14,6 @@ fi
 
 host_tag="linux-x86_64"
 toolchain="$ndk_root/toolchains/llvm/prebuilt/$host_tag/bin"
-sysroot="$ndk_root/toolchains/llvm/prebuilt/$host_tag/sysroot"
 cc="$toolchain/aarch64-linux-android26-clang"
 cxx="$toolchain/aarch64-linux-android26-clang++"
 llvm_readelf="$toolchain/llvm-readelf"
@@ -158,7 +157,6 @@ pkgconfig = '$static_pkg_config'
 
 [properties]
 needs_exe_wrapper = true
-sys_root = '$sysroot'
 
 [host_machine]
 system = 'android'
