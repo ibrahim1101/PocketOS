@@ -27,10 +27,6 @@ android {
         }
     }
 
-    sourceSets {
-        getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("generated/androidExecProbeJniLibs"))
-    }
-
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")

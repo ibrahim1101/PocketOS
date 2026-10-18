@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Build a tiny PIE executable and package it in androidTest jniLibs.
-# This probes whether Android permits an APK-embedded native executable to run
-# from the installed read-only native library directory.
+# Build PIE executables for APK native-library packaging and Android launch testing.
+# The emulator test launches the x86_64 copy from the installed app library directory.
 set -euo pipefail
 
 ndk_root="${1:?usage: build-android-exec-probe.sh <ndk-root> <output-root>}"

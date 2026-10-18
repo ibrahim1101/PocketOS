@@ -35,7 +35,7 @@ jobs:
           sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           bash scripts/build-android-exec-probe.sh \
             "$sdk_root/ndk/27.2.12479018" \
-            android/app/build/generated/androidExecProbeJniLibs
+            android/app/src/debug/jniLibs
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
@@ -71,9 +71,15 @@ jobs:
             kill "$emulator_pid" || true
             exit 1
           fi
-      - name: Run unit and Android native bridge tests
+      - name: Build APK and verify packaged executable entries
         run: |
-          gradle -p android testDebugUnitTest connectedDebugAndroidTest assembleDebug
+          gradle -p android testDebugUnitTest assembleDebug
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$apk" | grep -F "lib/x86_64/libpocketos_exec_probe.so"
+          unzip -l "$apk" | grep -F "lib/arm64-v8a/libpocketos_exec_probe.so"
+      - name: Run Android native bridge instrumentation tests
+        run: |
+          gradle -p android connectedDebugAndroidTest
           sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           python3 scripts/check-apk-native-abis.py \
             android/app/build/outputs/apk/debug/app-debug.apk \
