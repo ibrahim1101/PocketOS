@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   android:
-    name: Android unit tests and debug APK
+    name: Android unit tests and native bridge
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,16 +24,33 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - name: Install Android SDK platform
+      - name: Install Android SDK and emulator
         run: |
           sdkmanager_path="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager_path" --licenses
-          "$sdkmanager_path" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          "$sdkmanager_path" "platforms;android-35" "build-tools;35.0.0" "platform-tools" "cmake;3.22.1" "ndk;27.2.12479018" "emulator" "system-images;android-35;google_apis;x86_64"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - name: Run unit tests and assemble debug APK
-        run: gradle -p android testDebugUnitTest assembleDebug
+      - name: Start Android x86_64 emulator
+        run: |
+          echo "no" | "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/avdmanager" create avd -n pocketos-ci -k "system-images;android-35;google_apis;x86_64" --device pixel_2 --force
+          "${ANDROID_HOME:-/usr/local/lib/android/sdk}/emulator/emulator" -avd pocketos-ci -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -accel on > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          adb wait-for-device
+          booted=false
+          for attempt in $(seq 1 90); do
+            if [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == "1" ]]; then
+              booted=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$booted" != true ]]; then
+            cat "$RUNNER_TEMP/emulator.log"
+            exit 1
+          fi
+      - name: Run unit and Android native bridge tests
+        run: gradle -p android testDebugUnitTest connectedDebugAndroidTest assembleDebug
 
   guest-boot:
     name: Alpine ARM64 guest build and boot
