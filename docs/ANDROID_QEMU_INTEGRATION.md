@@ -4,7 +4,7 @@ Status: Android ARM64 QEMU and Alpine guest assets are built and packaged. The a
 
 ## Verified build and package boundary
 
-CI run #132 passed the pinned QEMU source fetch, Android ARM64 cross-build, APK assembly, native dependency audit, Android unit and x86_64 instrumentation tests, and host Alpine guest gates.
+CI run #135 passed the pinned QEMU source fetch, Android ARM64 cross-build, APK assembly, native dependency audit, Android unit and x86_64 instrumentation tests, and host Alpine guest gates.
 
 The cross-build downloads QEMU 11.1.2 from the pinned upstream archive and verifies SHA-256 `731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016`. It builds checksum-pinned libiconv, libffi, PCRE2, GLib, pixman, and libslirp static dependencies. A Bionic compatibility shim provides QEMU's temporary POSIX shared-memory file descriptor using an immediately unlinked file in its working directory.
 
@@ -22,7 +22,7 @@ The APK also contains Alpine's `vmlinuz-virt`, matching `initramfs-virt`, gzip-c
 
 `GuestBootCoordinator` couples these components to `VmLifecycle`: process start advances to BOOTING, and the RUNNING transition requires a complete login prompt and a persisted session deadline. It reports low-battery rejection and clears the session checkpoint after a process exit. JVM tests cover readiness, timer start at the prompt, cutoff, clean shutdown, and unexpected exit.
 
-These are tested components only. `ServerService` does not yet call the installer, coordinator, battery monitor, session policy, or process supervisor.
+The APK asset install path has additionally been exercised on the Android x86_64 emulator. This does not test ARM64 QEMU execution. These are tested components only. `ServerService` does not yet call the installer, coordinator, battery monitor, session policy, or process supervisor.
 
 ## Existing Android boundary tests
 
