@@ -212,7 +212,7 @@ compat_object="$build_root/pocketos-android-shm-compat.o"
 "$llvm_ar" rcs "$prefix/lib/libpocketos-android-compat.a" "$compat_object"
 
 export PATH="$wrappers:$PATH"
-export CFLAGS="-O2 -fPIE -D__BIONIC__=1 -I$prefix/include"
+export CFLAGS="-O2 -fPIE -D__BIONIC__=1 -I$prefix/include -include $script_dir/android-shm-compat.h"
 export CXXFLAGS="-O2 -fPIE"
 export LDFLAGS="-pie -L$prefix/lib -Wl,--whole-archive -lpocketos-android-compat -Wl,--no-whole-archive"
 qemu_build="$build_root/qemu-build"
