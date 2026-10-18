@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import tempfile
 import zipfile
@@ -50,7 +51,28 @@ def main() -> int:
                     f"{archive_path}: expected ELF machine {expected_machine!r}, "
                     f"found {machine_lines!r}"
                 )
-            print(f"{archive_path}: ELF machine {machine_lines[0]}")
+            dynamic = subprocess.run(
+                [str(args.llvm_readelf), "-d", str(library)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            needed = re.findall(r"\\(NEEDED\\).*?\\[([^]]+)\\]", dynamic.stdout)
+            search_paths = re.findall(
+                r"\\((?:RPATH|RUNPATH)\\).*?\\[([^]]*)\\]", dynamic.stdout
+            )
+            if search_paths:
+                raise SystemExit(
+                    f"{archive_path}: unexpected ELF runtime search paths {search_paths!r}"
+                )
+            if any("/data/data/com.termux" in item or "termux-build" in item for item in needed):
+                raise SystemExit(f"{archive_path}: Termux runtime dependency detected: {needed!r}")
+            if any(item.startswith("/") for item in needed):
+                raise SystemExit(f"{archive_path}: absolute ELF dependency detected: {needed!r}")
+            print(
+                f"{archive_path}: ELF machine {machine_lines[0]}; "
+                f"DT_NEEDED={', '.join(needed) or '(none)'}; no RPATH/RUNPATH"
+            )
 
     return 0
 
