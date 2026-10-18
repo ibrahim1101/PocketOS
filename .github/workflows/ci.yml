@@ -38,7 +38,10 @@ jobs:
           set -euxo pipefail
           sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           export PATH="$sdk_root/platform-tools:$sdk_root/emulator:$PATH"
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
           echo "no" | "$sdk_root/cmdline-tools/latest/bin/avdmanager" create avd -n pocketos-ci -k "system-images;android-35;google_apis;x86_64" --device pixel_2 --force
+          "$sdk_root/cmdline-tools/latest/bin/avdmanager" list avd
           "$sdk_root/emulator/emulator" -avd pocketos-ci -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -accel on > "$RUNNER_TEMP/emulator.log" 2>&1 &
           emulator_pid=$!
           if ! timeout 120s adb wait-for-device; then
