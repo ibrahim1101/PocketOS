@@ -72,7 +72,7 @@ fetch_source "pcre2-10.49.tar.bz2" \
   "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.49/pcre2-10.49.tar.bz2" \
   "53c156e1ba416a20da8e65395daa132da0d80e76910424caca3fcdae7831d384"
 fetch_source "libiconv-1.19.tar.gz" \
-  "https://mirrors.kernel.org/gnu/libiconv/libiconv-1.19.tar.gz" \
+  "https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz" \
   "88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6"
 fetch_source "glib-2.90.1.tar.xz" \
   "https://download.gnome.org/sources/glib/2.90/glib-2.90.1.tar.xz" \
