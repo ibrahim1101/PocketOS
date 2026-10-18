@@ -21,7 +21,7 @@ The Termux package recipe is a useful compatibility reference, but it does not p
 
 ## Pinned source acquisition
 
-`scripts/fetch-android-qemu-source.sh` now provides a reproducible source-only step for QEMU 11.1.2. It downloads the upstream release archive over HTTPS, checks the pinned SHA-256 (`731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016`), validates the archive root and QEMU configure script, and refuses to overwrite an existing destination. CI ShellCheck passes for the script. This makes the source input reproducible; it does not configure, compile, or package QEMU, and does not change the Android runtime status above.
+`scripts/fetch-android-qemu-source.sh` now provides a reproducible source-only step for QEMU 11.1.2. It downloads the upstream release archive over HTTPS, checks the pinned SHA-256 (`731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016`), validates the archive root and QEMU configure script, and refuses to overwrite an existing destination. CI run [#100](https://github.com/ibrahim1101/PocketOS/actions/runs/39155206068) executes the fetch step and verifies the extracted configure script. This makes the source input reproducible; it does not configure, compile, or package QEMU, and does not change the Android runtime status above.
 
 The next build spike should start from the pinned upstream release and explicitly carry only the required compatibility patches. It should produce a JNI-loadable shared library for `arm64-v8a`, with the QEMU main loop isolated behind start, readiness, and stop entry points. The Termux build output remains a reference for portability fixes, not a runtime dependency.
 
@@ -29,7 +29,7 @@ The next build spike should start from the pinned upstream release and explicitl
 
 Test a PocketOS-owned Android NDK build for `aarch64-softmmu` and package the result as code embedded in the APK. The first spike must establish how the QEMU main loop can be safely entered and stopped from a JNI-loaded native library. It must not assume that calling an unmodified command-line `main()` from JNI is safe.
 
-Keep VM execution in a dedicated Android process so native failures do not take down the dashboard process. Expose a narrow host API for start, readiness, graceful stop, force-stop, and diagnostics. Use a serial byte channel between the VM process and the Android terminal; use QMP or another documented QEMU control channel for shutdown. Keep guest disks under app-private persistent storage and never execute copied guest or QEMU binaries from that storage.
+The manifest now assigns `ServerService` to the app's dedicated `:vm` process, and emulator instrumentation verifies the resolved process name. The service still fails closed and does not load or start QEMU. Keep VM execution in this dedicated Android process so native failures do not take down the dashboard process. Expose a narrow host API for start, readiness, graceful stop, force-stop, and diagnostics. Use a serial byte channel between the VM process and the Android terminal; use QMP or another documented QEMU control channel for shutdown. Keep guest disks under app-private persistent storage and never execute copied guest or QEMU binaries from that storage.
 
 ## Proof gates
 
