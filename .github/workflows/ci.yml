@@ -66,7 +66,12 @@ jobs:
             exit 1
           fi
       - name: Run unit and Android native bridge tests
-        run: gradle -p android testDebugUnitTest connectedDebugAndroidTest assembleDebug
+        run: |
+          gradle -p android testDebugUnitTest connectedDebugAndroidTest assembleDebug
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          python3 scripts/check-apk-native-abis.py \
+            android/app/build/outputs/apk/debug/app-debug.apk \
+            "$sdk_root/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
 
   guest-boot:
     name: Alpine ARM64 guest build and boot
