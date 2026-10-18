@@ -173,7 +173,7 @@ meson setup "$build_root/glib-build" "$sources/glib-2.90.1" \
   --libdir=lib \
   --buildtype=release \
   --default-library=static \
-  --wrap-mode=nofallback \
+  --wrap-mode=default \
   -Dtests=false \
   -Dinstalled_tests=false \
   -Dintrospection=disabled \
