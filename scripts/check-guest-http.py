@@ -85,7 +85,7 @@ def marker_command(token: bytes) -> str:
     midpoint = len(token) // 2
     first = token[:midpoint].decode("ascii")
     second = token[midpoint:].decode("ascii")
-    return "printf '%s%s\\\\n' '" + first + "' '" + second + "'"
+    return "printf '%s%s\\n' '" + first + "' '" + second + "'"
 
 
 def send_checked(
@@ -99,7 +99,7 @@ def send_checked(
     failure = b"__POCKETOS_GUEST_COMMAND_FAILED__"
     payload = (
         f"if {command}; then {marker_command(success)}; "
-        f"else {marker_command(failure)}; fi\\n"
+        f"else {marker_command(failure)}; fi\n"
     )
     os.write(master_fd, payload.encode())
     observed = read_until(
