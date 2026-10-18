@@ -176,7 +176,7 @@ def main() -> int:
         )
 
         start_server = (
-            "busybox httpd -f -p 8080 -h /tmp/pocketos-www "
+            "busybox-extras httpd -f -p 8080 -h /tmp/pocketos-www "
             ">/tmp/pocketos-httpd.log 2>&1 & "
             "echo $! >/tmp/pocketos-httpd.pid; sleep 1; "
             "if ! kill -0 \"$(cat /tmp/pocketos-httpd.pid)\"; then "
