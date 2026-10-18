@@ -41,6 +41,7 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   mkfs.ext4 -q -F -d /guest "/output/$OUTPUT_NAME"
   echo "Guest disk created."
 '
+chmod 644 "$OUT"
 echo "Output: $OUT"
-echo "NOTE: this is a disk image, not a kernel. Supply an ARM64 Image separately."
-echo "NOTE: validate init, login, network and virtio support with an actual QEMU boot."
+echo "The ext4 disk contains Alpine's linux-virt kernel and matching modules."
+echo "Extract /boot/vmlinuz-virt and boot it with scripts/boot-guest.sh."
