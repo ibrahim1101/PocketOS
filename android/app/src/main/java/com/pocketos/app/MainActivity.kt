@@ -330,6 +330,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_NOTIFICATIONS = 42
+        private const val REQUEST_DISK_EXPORT = 43
         private const val SETTINGS_PREFS = "guest_settings"
         private const val MAX_TERMINAL_CHARS = 32_768
     }
