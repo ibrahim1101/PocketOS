@@ -43,7 +43,13 @@ The guest-boot CI job drives the hidden `passwd` prompts over QEMU serial using 
 
 The service must run in the dedicated `:vm` process as a foreground service while the guest is active; launch QEMU from the APK-extracted native-library directory; use app-private working storage and the persistent guest disk; keep serial and diagnostics separate; request graceful QMP shutdown before bounded force termination; and bind localhost forwarding to loopback by default.
 
-The service may transition to RUNNING only after the first-run password prompt or serial login prompt is detected and the deadline is stored. Low battery blocks startup and requests shutdown at or below 20%. ARM64 Android execution and secure guest login remain unverified, so service startup stays disabled.
+The service may transition to RUNNING only after the first-run password prompt or serial login prompt is detected and the deadline is stored. The runtime gate remains closed until QEMU execution and guest boot pass on ARM64 Android. Low battery blocks startup and requests shutdown at or below 20%. ARM64 Android execution and secure guest login remain unverified, so service startup stays disabled.
+
+## Physical ARM64 device test
+
+The ARM64-only instrumentation test uses a fresh copy of the packaged ext4 seed, verifies its hash, provisions a non-root account, logs in, checks the setup marker across a reboot, and requires a clean QMP quit. The temporary disk keeps test credentials out of the user's persistent guest disk. A separate test verifies child stderr capture and nonzero exit handling.
+
+CI publishes app and instrumentation APKs from the same commit, with build hashes and emulator results. Follow [Physical ARM64 Android testing](PHYSICAL_ANDROID_TESTING.md) to install them.
 
 ## Next proof gates
 

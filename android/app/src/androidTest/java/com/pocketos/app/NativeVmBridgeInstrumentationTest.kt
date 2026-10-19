@@ -52,6 +52,33 @@ class NativeVmBridgeInstrumentationTest {
     }
 
     @Test
+    fun capturesChildFailureDiagnosticsAndNonzeroExitStatus() {
+        val output = StringBuilder()
+        val lock = Any()
+        val diagnosticSeen = CountDownLatch(1)
+        val process = NativeProcessSupervisor().start(
+            command = listOf(
+                "/system/bin/sh",
+                "-c",
+                "printf 'POCKETOS_CHILD_FAILURE_DIAGNOSTIC\\n' >&2; exit 23",
+            ),
+            onDiagnosticOutput = { bytes ->
+                synchronized(lock) {
+                    output.append(String(bytes, Charsets.UTF_8))
+                    if (output.contains("POCKETOS_CHILD_FAILURE_DIAGNOSTIC")) diagnosticSeen.countDown()
+                }
+            },
+        )
+
+        assertTrue("Child process did not exit", process.awaitExit(10, TimeUnit.SECONDS))
+        assertEquals("Unexpected child exit status", 23, process.exitCode)
+        assertTrue("Child stderr diagnostics were not captured", diagnosticSeen.await(5, TimeUnit.SECONDS))
+        synchronized(lock) {
+            assertTrue(output.contains("POCKETOS_CHILD_FAILURE_DIAGNOSTIC"))
+        }
+    }
+
+    @Test
     fun vmServiceRunsInDedicatedProcess() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val serviceInfo = context.packageManager.getServiceInfo(

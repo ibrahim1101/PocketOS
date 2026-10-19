@@ -6,11 +6,11 @@ Updated: 2026-10-19
 
 - Active milestones: M6 — persistent storage management and M7 — localhost/LAN networking.
 - Active branch: feat/m1-linux-boot; PR #1 remains open.
-- Latest fully passing feature validation: run #161. Android unit tests and Alpine integration tests passed in run #169; the overall workflow is still completing its final Android job.
+- Latest fully completed workflow success: run #169 (commit 038077b). Run #172 built the debug APK, cross-built Android ARM64 QEMU, passed APK ABI audit and Android unit/instrumentation tests; its Alpine guest job passed through localhost HTTP, then the new Python workload step was cancelled. Current branch commits after #172 require a fresh full CI run.
 - The APK packages QEMU 11.1.2, Alpine's matching kernel and initramfs, a compressed ext4 seed disk, and a SHA-256 manifest. CI verifies the root password is locked in the generated seed image.
 - The app installs and verifies guest assets in private storage. Unit and Android instrumentation tests cover disk integrity, repeat install, exclusive disk leasing, VM lifecycle, readiness, session policy, and runtime-gate decisions.
 - Host CI boots Alpine under QEMU, provisions a non-root pocketos account through hidden serial password prompts, verifies login after restart, runs Linux commands, checks ext4 persistence, and tests localhost HTTP forwarding.
-- No QEMU execution, guest boot, or interactive guest login has yet been performed on ARM64 Android. The x86_64 Android emulator skips the ARM64-only runtime tests. A Linux ARM64 emulator job was removed because Google's SDK repository did not provide the emulator package.
+- No QEMU execution, guest boot, or interactive guest login has yet been performed on ARM64 Android. The physical-device instrumentation test now covers first-run password creation, non-root login, a persistent setup marker across reboot, and QMP shutdown using an isolated throwaway disk. The x86_64 Android emulator skips the ARM64-only runtime tests. A Linux ARM64 emulator job was removed because Google's SDK repository did not provide the emulator package.
 - The ARM64 runtime gate is closed by default. On an ARM64 Android install, QemuAndroidRuntimeInstrumentationTest runs QEMU --version and boots the packaged Alpine guest to its first-run or login prompt. Successful tests save evidence tied to the packaged guest asset manifest and QEMU version; the service can start only when both checks pass. Run gradle -p android connectedDebugAndroidTest on an ARM64 Android device to execute these checks.
 
 ## Implemented and CI-verified
@@ -27,7 +27,7 @@ Updated: 2026-10-19
 
 ## Remaining validation
 
-- Run the ARM64 instrumentation suite on a physical ARM64 Android device. The current workspace has no adb/device connection, and CI only provides an x86_64 Android emulator.
-- After the runtime gate opens on that device, finish first-run account setup and login through the app terminal; verify package installation, guest filesystem usage telemetry, and Android-side localhost access.
-- Measure boot time, memory use, and battery impact on physical ARM64 hardware. LAN exposure, disk resizing/import, guest filesystem usage telemetry, and custom kernels remain later work.
+- Download the paired app/instrumentation APK artifacts from the first full CI run after commit 859d3a3, then run docs/PHYSICAL_ANDROID_TESTING.md on an ARM64 Android device. The current workspace has no adb/device connection, and CI only provides an x86_64 Android emulator.
+- The physical instrumentation test provisions a temporary throwaway guest disk so it does not set a test password on the user's persistent guest disk. After the runtime gate opens, use the app terminal to verify first-run login on the user's own persistent disk, package installation, and Android-side localhost access.
+- Measure boot time, memory use, and battery impact on physical ARM64 hardware. LAN exposure across network transitions, disk resizing/import, custom kernels, and secure remote access remain later work.
 - Do not merge or release without explicit approval.

@@ -97,25 +97,70 @@ jobs:
             kill "$emulator_pid" || true
             exit 1
           fi
-      - name: Build APK and verify packaged executable entries
+      - name: Build app and instrumentation APKs from this commit
         run: |
-          gradle -p android testDebugUnitTest assembleDebug
-          apk=android/app/build/outputs/apk/debug/app-debug.apk
-          unzip -Z1 "$apk" | grep -F "assets/pocketos/"
-          unzip -l "$apk" | grep -F "lib/x86_64/libpocketos_exec_probe.so"
-          unzip -l "$apk" | grep -F "lib/arm64-v8a/libpocketos_exec_probe.so"
-          unzip -l "$apk" | grep -F "lib/arm64-v8a/libqemu-system-aarch64.so"
-          unzip -l "$apk" | grep -F "assets/pocketos/vmlinuz-virt"
-          unzip -l "$apk" | grep -F "assets/pocketos/initramfs-virt"
-          unzip -l "$apk" | grep -F "assets/pocketos/rootfs.ext4.gzip"
-          unzip -l "$apk" | grep -F "assets/pocketos/assets.sha256"
-      - name: Run Android native bridge instrumentation tests
+          set -euo pipefail
+          gradle -p android testDebugUnitTest assembleDebug assembleDebugAndroidTest
+          app_apk=android/app/build/outputs/apk/debug/app-debug.apk
+          test_apk=android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          test -s "$app_apk"
+          test -s "$test_apk"
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          aapt="$sdk_root/build-tools/35.0.0/aapt"
+          "$aapt" dump badging "$app_apk" | grep -F "package: name='com.pocketos.app'"
+          "$aapt" dump badging "$test_apk" | grep -F "package: name='com.pocketos.app.test'"
+          for asset in vmlinuz-virt initramfs-virt rootfs.ext4.gzip assets.sha256; do
+            unzip -Z1 "$app_apk" | grep -Fx "assets/pocketos/$asset"
+          done
+          asset_check_dir="$(mktemp -d)"
+          trap 'rm -rf "$asset_check_dir"' EXIT
+          unzip -q "$app_apk" 'assets/pocketos/*' -d "$asset_check_dir"
+          (cd "$asset_check_dir/assets/pocketos" && sha256sum -c assets.sha256)
+          for library in lib/arm64-v8a/libqemu-system-aarch64.so lib/arm64-v8a/libpocketos_vm.so lib/x86_64/libpocketos_vm.so; do
+            unzip -Z1 "$app_apk" | grep -Fx "$library"
+          done
+          unzip -Z1 "$test_apk" | grep -F "classes.dex"
+          mkdir -p dist
+          cp "$app_apk" dist/PocketOS-debug.apk
+          cp "$test_apk" dist/PocketOS-androidTest.apk
+          printf 'commit=%s\n' "$GITHUB_SHA" > dist/build-info.txt
+          sha256sum dist/PocketOS-debug.apk dist/PocketOS-androidTest.apk > dist/SHA256SUMS
+      - name: Verify packaged native library ABI and dependencies
         run: |
-          gradle -p android connectedDebugAndroidTest
           sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           python3 scripts/check-apk-native-abis.py \
             android/app/build/outputs/apk/debug/app-debug.apk \
             "$sdk_root/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+      - name: Run Android native bridge instrumentation tests
+        run: gradle -p android connectedDebugAndroidTest
+      - name: Upload Android app APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocketos-android-apk-${{ github.sha }}
+          path: dist/PocketOS-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Android instrumentation APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocketos-instrumentation-apk-${{ github.sha }}
+          path: dist/PocketOS-androidTest.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload build identity and Android emulator test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocketos-test-handoff-${{ github.sha }}
+          path: |
+            dist/build-info.txt
+            dist/SHA256SUMS
+            android/app/build/outputs/androidTest-results/connected/
+            android/app/build/reports/androidTests/connected/
+          if-no-files-found: ignore
+          retention-days: 14
 
   guest-boot:
     name: Alpine ARM64 guest build and boot
