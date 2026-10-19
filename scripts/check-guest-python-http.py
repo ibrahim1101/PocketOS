@@ -181,7 +181,8 @@ def main() -> int:
         print("Guest shell ready; configuring DHCP.", flush=True)
         run_command(
             process, master_fd, buffer,
-            "ip link set eth0 up && timeout 30 udhcpc -n -q -t 5 -T 1 -i eth0",
+            "mount -o remount,rw / && ip link set eth0 up && "
+            "timeout 30 udhcpc -n -q -t 5 -T 1 -i eth0",
             "DHCP_READY", min(args.timeout, 60),
         )
         print("Guest networking ready; installing Python 3.", flush=True)

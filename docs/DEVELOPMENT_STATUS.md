@@ -6,7 +6,7 @@ Updated: 2026-10-19
 
 - Active milestones: M9 — real server workloads; physical ARM64 runtime validation remains pending.
 - Active branch: feat/m1-linux-boot; PR #1 remains open.
-- Latest fully successful workflow: run #181 (commit 8ca2f1a). Runs #182–#185 built both APKs, cross-built Android ARM64 QEMU, passed APK ABI audit and Android instrumentation, and passed Alpine checks through localhost forwarding. The Python probe now splits PTY status markers, bounds DHCP, and reads a complete status line using the same logic as the passing HTTP probe. A fresh CI run is pending.
+- Latest fully successful workflow: run #181 (commit 8ca2f1a). Runs #182–#186 built both APKs, cross-built Android ARM64 QEMU, passed APK ABI audit and Android instrumentation, and passed Alpine checks through localhost forwarding. Run #186 confirmed the PTY marker fix and DHCP lease; Python installation then failed because the guest root was mounted read-only. The probe now remounts its temporary CI disk read/write before DHCP and package installation; validation is pending.
 - The APK packages QEMU 11.1.2, Alpine's matching kernel and initramfs, a compressed ext4 seed disk, and a SHA-256 manifest. CI verifies the root password is locked in the generated seed image.
 - The app installs and verifies guest assets in private storage. Unit and Android instrumentation tests cover disk integrity, repeat install, exclusive disk leasing, VM lifecycle, readiness, session policy, and runtime-gate decisions.
 - Host CI boots Alpine under QEMU, provisions a non-root pocketos account through hidden serial password prompts, verifies login after restart, runs Linux commands, checks ext4 persistence, and tests localhost HTTP forwarding.
@@ -24,7 +24,7 @@ Updated: 2026-10-19
 - A bounded private diagnostic event history records start/stop requests, runtime gate blocks, and lifecycle changes using timestamps and enum-only details; the export omits free-form runtime and terminal data.
 - QemuLaunchConfig uses ARM virt TCG, a persistent VirtIO disk, serial console, and QMP. HTTP forwarding binds to 127.0.0.1 by default; optional Wi-Fi LAN forwarding requires an explicit confirmation and binds to the active Wi-Fi IPv4 address.
 - Android CI cross-builds QEMU for arm64-v8a, audits packaged libraries, builds the APK, runs unit tests and x86_64 emulator instrumentation. Alpine CI performs the guest boot, account, shell, persistence, and forwarding checks.
-- The Alpine guest job is configured to install Python 3, start a Python HTTP server in the guest, and verify its response through the host's loopback-only forwarded port; runs #182–#185 exposed status-marker and serial-read timing issues in the new probe, which have been fixed pending rerun.
+- The Alpine guest job is configured to install Python 3, start a Python HTTP server in the guest, and verify its response through the host's loopback-only forwarded port; run #186 exposed a read-only root filesystem issue in the probe setup, now fixed pending rerun.
 
 ## Remaining validation
 
