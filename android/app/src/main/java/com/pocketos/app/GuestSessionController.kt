@@ -55,6 +55,7 @@ class GuestSessionController(
     private val gracefulShutdownTimeoutMs: Long = DEFAULT_SHUTDOWN_TIMEOUT_MS,
     private val forceStopTimeoutMs: Long = DEFAULT_FORCE_STOP_TIMEOUT_MS,
     private val onDiagnosticOutput: (ByteArray) -> Unit = {},
+    private val onStateChanged: (VmState) -> Unit = {},
 ) {
     private val lock = Any()
     private var process: GuestProcess? = null
@@ -110,6 +111,7 @@ class GuestSessionController(
                 isDaemon = true
                 start()
             }
+            publishState()
             true
         } catch (_: Exception) {
             failStartLocked()
@@ -151,6 +153,7 @@ class GuestSessionController(
                 else -> return false
             }
             lastStopReason = reason
+            publishState()
             deadlineTask?.cancel()
             deadlineTask = null
             currentProcess = process
@@ -217,6 +220,7 @@ class GuestSessionController(
             }
             else -> Unit
         }
+        publishState()
     }
 
     private fun monitorProcess(current: GuestProcess) {
@@ -242,6 +246,7 @@ class GuestSessionController(
             }
             process = null
             releaseGuestLocked()
+            publishState()
         }
     }
 
@@ -252,6 +257,11 @@ class GuestSessionController(
         coordinator.clearSession()
         lastStopReason = GuestStopReason.START_FAILURE
         releaseGuestLocked()
+        publishState()
+    }
+
+    private fun publishState() {
+        runCatching { onStateChanged(lifecycle.state) }
     }
 
     private fun releaseGuestLocked() {

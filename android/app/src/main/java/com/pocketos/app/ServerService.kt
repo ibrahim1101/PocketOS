@@ -1,15 +1,170 @@
 package com.pocketos.app
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
+import android.util.Log
+import java.io.File
 
-/** Reserved for the real VM foreground-service lifecycle. No VM is started here. */
+/** Foreground owner for the Linux guest; launch remains fail-closed until ARM64 validation. */
 class ServerService : Service() {
+    private lateinit var lifecycle: VmLifecycle
+    private lateinit var controller: GuestSessionController
+    private lateinit var workerThread: HandlerThread
+    private lateinit var worker: Handler
+    private lateinit var batteryMonitor: BatteryLevelMonitor
+    private var currentStatus = "Stopped"
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+        lifecycle = VmLifecycle()
+        workerThread = HandlerThread("pocketos-vm-service").apply { start() }
+        worker = Handler(workerThread.looper)
+        val checkpoint = SessionProtection(
+            SharedPreferencesSessionCheckpointStore(getSharedPreferences("session", MODE_PRIVATE))
+        )
+        val coordinator = GuestBootCoordinator(lifecycle, GuestReadinessProbe(), checkpoint)
+        controller = GuestSessionController(
+            lifecycle = lifecycle,
+            coordinator = coordinator,
+            processLauncher = NativeProcessSupervisor(),
+            scheduler = SessionTaskScheduler { delay, task ->
+                val runnable = Runnable(task)
+                worker.postDelayed(runnable, delay)
+                ScheduledSessionTask { worker.removeCallbacks(runnable) }
+            },
+            batteryPercent = ::currentBatteryPercent,
+            onDiagnosticOutput = { bytes -> Log.d(TAG, "QEMU diagnostic bytes=${bytes.size}") },
+            onStateChanged = { state ->
+                currentStatus = state.name.lowercase().replaceFirstChar { it.uppercase() }
+                publishStatus(currentStatus)
+                updateNotification(currentStatus)
+            },
+        )
+        batteryMonitor = BatteryLevelMonitor(this) { controller.onBatteryChanged(it) }
+        batteryMonitor.start()
+        publishStatus(currentStatus)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Fail closed until real engine, notifications, and shutdown handling exist.
-        stopSelf(startId)
+        when (intent?.action) {
+            ACTION_STOP -> worker.post {
+                controller.stopByUser()
+                currentStatus = "Stopped"
+                publishStatus(currentStatus)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf(startId)
+            }
+            ACTION_START, null -> {
+                startForeground(NOTIFICATION_ID, buildNotification("Starting"))
+                worker.post {
+                    val result = AndroidRuntimeValidation.evaluate(
+                        Build.SUPPORTED_ABIS.toList(),
+                        QEMU_EXECUTION_VERIFIED_ON_ANDROID,
+                        GUEST_BOOT_VERIFIED_ON_ANDROID,
+                    )
+                    if (!result.allowed) {
+                        currentStatus = "Blocked: ${result.reason}"
+                        publishStatus(currentStatus)
+                        updateNotification(currentStatus)
+                        stopSelf(startId)
+                        return@post
+                    }
+                    currentStatus = "Preparing"
+                    publishStatus(currentStatus)
+                    if (!controller.start(::prepareGuest)) {
+                        currentStatus = controller.lastStopReason?.let { "Failed: $it" } ?: "Unable to start"
+                        publishStatus(currentStatus)
+                        updateNotification(currentStatus)
+                        stopSelf(startId)
+                    }
+                }
+            }
+            else -> stopSelf(startId)
+        }
         return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        batteryMonitor.close()
+        if (::workerThread.isInitialized) workerThread.quitSafely()
+        super.onDestroy()
+    }
+
+    private fun prepareGuest(): PreparedGuest {
+        val assets = GuestAssetInstaller.forContext(this).install()
+        val lease = GuestDiskLease.acquire(assets.rootDisk)
+        val qmpSocket = File(filesDir, "pocketos-qmp.sock")
+        qmpSocket.delete()
+        val executable = File(applicationInfo.nativeLibraryDir, "libqemu-system-aarch64.so")
+        check(executable.isFile && executable.canExecute()) { "Packaged ARM64 QEMU executable is unavailable" }
+        val config = QemuLaunchConfig(executable, assets.kernel, assets.initramfs, assets.rootDisk, qmpSocket)
+        return PreparedGuest(
+            command = config.toCommand(),
+            workingDirectory = filesDir,
+            diskLease = lease,
+            requestGracefulShutdown = { QmpClient().requestQuit(qmpSocket.absolutePath) },
+        )
+    }
+
+    private fun currentBatteryPercent(): Int {
+        val intent = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = intent?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = intent?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+        return if (level >= 0 && scale > 0) level * 100 / scale else -1
+    }
+
+    private fun publishStatus(value: String) {
+        sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_STATUS, value))
+    }
+
+    private fun updateNotification(status: String) {
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(status))
+    }
+
+    private fun buildNotification(status: String): Notification {
+        val stopIntent = PendingIntent.getService(
+            this, 1, Intent(this, ServerService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return Notification.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setContentTitle("PocketOS")
+            .setContentText(status)
+            .setOngoing(status !in listOf("Stopped") && !status.startsWith("Blocked") && !status.startsWith("Failed"))
+            .addAction(Notification.Action.Builder(null, "Stop", stopIntent).build())
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            getSystemService(NotificationManager::class.java).createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "PocketOS VM", NotificationManager.IMPORTANCE_LOW)
+            )
+        }
+    }
+
+    companion object {
+        const val ACTION_START = "com.pocketos.app.START_VM"
+        const val ACTION_STOP = "com.pocketos.app.STOP_VM"
+        const val ACTION_STATUS = "com.pocketos.app.VM_STATUS"
+        const val EXTRA_STATUS = "status"
+        private const val TAG = "PocketOS"
+        private const val CHANNEL_ID = "pocketos-vm"
+        private const val NOTIFICATION_ID = 4101
+
+        // Enable only after execution and guest boot are demonstrated on ARM64 Android.
+        const val QEMU_EXECUTION_VERIFIED_ON_ANDROID = false
+        const val GUEST_BOOT_VERIFIED_ON_ANDROID = false
     }
 }
