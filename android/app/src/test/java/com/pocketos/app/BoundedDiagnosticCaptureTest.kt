@@ -32,6 +32,15 @@ class BoundedDiagnosticCaptureTest {
     }
 
     @Test
+    fun preservesAdjacentInteractivePasswordPrompts() {
+        val capture = BoundedDiagnosticCapture()
+        capture.append("New password:\nRetype password:\n".toByteArray())
+
+        assertTrue(capture.snapshot().contains("New password:"))
+        assertTrue(capture.snapshot().contains("Retype password:"))
+    }
+
+    @Test
     fun validatesCapacity() {
         val error = runCatching { BoundedDiagnosticCapture(0) }.exceptionOrNull()
         assertEquals("Diagnostic capacity must be positive", error?.message)

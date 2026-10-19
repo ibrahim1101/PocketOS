@@ -37,13 +37,15 @@ class BoundedDiagnosticCapture(private val capacityChars: Int = 8_192) {
     private fun sanitize(value: String): String {
         var safe = ANSI_ESCAPE.replace(value, "")
         secrets.forEach { secret -> safe = safe.replace(secret, REDACTED) }
-        safe = CREDENTIAL_VALUE.replace(safe) { match -> "${match.groupValues[1]}[REDACTED]" }
+        safe = CREDENTIAL_VALUE.replace(safe) {
+            "${it.groupValues[1]}${it.groupValues[2]}[REDACTED]"
+        }
         return safe.filter { it == '\n' || it == '\r' || it == '\t' || it >= ' ' }
     }
 
     private companion object {
         const val REDACTED = "[REDACTED]"
         val ANSI_ESCAPE = Regex("\\u001B(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\u0007]*(?:\\u0007|\\u001B\\\\))")
-        val CREDENTIAL_VALUE = Regex("(?i)(password|passwd|token|secret|credential)(\\s*[:=]\\s*)\\S+")
+        val CREDENTIAL_VALUE = Regex("(?i)(password|passwd|token|secret|credential)([ \\t]*[:=][ \\t]*)[^\\s,;]+")
     }
 }
