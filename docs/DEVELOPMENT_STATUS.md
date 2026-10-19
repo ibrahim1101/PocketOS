@@ -4,39 +4,27 @@ Updated: 2026-10-19
 
 ## Current state
 
-- Active milestone: M2 — Android ARM64 QEMU build, guest asset installation, and service integration.
-- Active branch: `feat/m1-linux-boot`; PR #1 remains open.
-- Latest fully passing CI revision: `662a6fe1a4d5baf026bcbb289f0bae229203d4ec` (run #159).
-- CI run #144 passed the Android ARM64 QEMU cross-build and APK audit, Android JVM unit tests and x86_64 bridge instrumentation, both generated-image root-lock checks, and the Alpine ARM64 boot, shell, persistence, and localhost HTTP checks. The ARM64 QEMU execution test is skipped on x86_64 because it requires an ARM64 app install. Run #141 separately confirmed that `ubuntu-24.04-arm` cannot install Google's Android emulator: `sdkmanager` reported `Failed to find package 'emulator'`, so the unsupported runner job was removed.
-- The APK contains QEMU 11.1.2 plus Alpine's kernel, matching initramfs, compressed ext4 seed disk, and SHA-256 manifest. The root password is explicitly locked in the generated seed image, and `scripts/check-guest-root-lock.sh` verifies both generated ext4 images in CI.
-- `GuestAssetInstaller` verifies packaged hashes and ext4 format, stages versioned boot assets, atomically expands the seed disk to app-private storage, preserves it across repeat installs, and has an app-context factory. Android instrumentation installs the real APK assets, checks the 256 MiB ext4 disk, and verifies repeat-install preservation.
-- `GuestDiskLease` obtains an exclusive OS file lock beside the guest disk. Unit and Android instrumentation tests reject a concurrent writer and verify the lease can be acquired after release.
-- `GuestReadinessProbe` detects the first-run password prompt or Alpine's complete serial login prompt across chunks and ANSI output.
-- `SessionProtection` persists an elapsed-realtime deadline, preserves it through process recovery, expires pre-reboot checkpoints, and applies the 20% battery cutoff. `BatteryLevelMonitor` uses broadcasts without polling.
-- `GuestBootCoordinator` ties readiness to the VM state machine: process start reaches BOOTING, while RUNNING requires the first-run setup or login prompt and a saved deadline. It rejects low-battery readiness and fails on unexpected process exit.
-- `QemuAndroidRuntimeInstrumentationTest` checks the app's actual installed native-library ABI and runs QEMU `--version` when the app is installed as ARM64. The regular x86_64 CI emulator skips that test. We attempted a Linux ARM64 Android emulator job, but Google’s stable SDK repository did not provide the Linux ARM64 `emulator` package (`sdkmanager` returned `Failed to find package 'emulator'`), so that job was removed. No Android QEMU execution, Android guest boot, interactive guest login, or physical ARM64 device test has been performed. `ServerService` now owns the `GuestSessionController`, event-driven battery monitor, QMP shutdown request, foreground notification, and status broadcasts. The ARM64 Android runtime gate stays closed until the ARM64-only instrumentation suite executes QEMU --version and boots Alpine to a first-run or login prompt. That suite records evidence scoped to the installed guest asset manifest; the x86_64 CI emulator skips the ARM64 tests.
+- Active milestone: M2 — Android ARM64 QEMU build, guest assets, and service integration.
+- Active branch: feat/m1-linux-boot; PR #1 remains open.
+- Latest fully passing CI revision: 26495aea20cb60a0fea5cd814195b15468212c44 (run #161).
+- The APK packages QEMU 11.1.2, Alpine's matching kernel and initramfs, a compressed ext4 seed disk, and a SHA-256 manifest. CI verifies the root password is locked in the generated seed image.
+- The app installs and verifies guest assets in private storage. Unit and Android instrumentation tests cover disk integrity, repeat install, exclusive disk leasing, VM lifecycle, readiness, session policy, and runtime-gate decisions.
+- Host CI boots Alpine under QEMU, provisions a non-root pocketos account through hidden serial password prompts, verifies login after restart, runs Linux commands, checks ext4 persistence, and tests localhost HTTP forwarding.
+- No QEMU execution, guest boot, or interactive guest login has yet been performed on ARM64 Android. The x86_64 Android emulator skips the ARM64-only runtime tests. A Linux ARM64 emulator job was removed because Google's SDK repository did not provide the emulator package.
+- The ARM64 runtime gate is closed by default. On an ARM64 Android install, QemuAndroidRuntimeInstrumentationTest runs QEMU --version and boots the packaged Alpine guest to its first-run or login prompt. Successful tests save evidence tied to the packaged guest asset manifest and QEMU version; the service can start only when both checks pass. Run gradle -p android connectedDebugAndroidTest on an ARM64 Android device to execute these checks.
 
-## Implemented and verified
+## Implemented and CI-verified
 
-- Kotlin VM state machine prevents invalid and duplicate starts; tests cover boot, stop, failure, cancellation, and concurrency.
-- NativeProcessSupervisor provides separate serial and diagnostic streams, stdin, exit waiting, and force-stop fallback.
-- QmpClient negotiates QMP and requests graceful shutdown; Android local-socket instrumentation passes.
-- QemuLaunchConfig describes ARM virt TCG, kernel/initramfs, persistent VirtIO block, serial stdio, QMP, and loopback-only HTTP forwarding. It has not been run with Android QEMU.
-- CI cross-builds pinned QEMU 11.1.2 for arm64-v8a with checksum-pinned dependencies and audits packaged ELF architecture, linker, and runtime dependencies.
-- CI boots Alpine under host QEMU, runs Linux shell commands, verifies ext4 persistence across restart, and tests localhost HTTP forwarding.
-- Installer, readiness, session protection, and lifecycle coordination are tested components. `GuestSessionController` composes preparation, process launch, serial readiness, the deadline, battery cutoff, QMP shutdown, bounded force-stop, and disk-lease cleanup. Controller lifecycle and runtime-gate tests pass in CI.
-- The activity exposes start/stop controls, serial terminal input/output, persistent guest memory/vCPU/loopback-port settings, and runtime diagnostics. Service status refreshes when the activity returns; stop reasons are shown in terminal service status. Startup remains blocked until ARM64 Android validation passes. The widget still only opens the app.
+- Foreground service owns GuestSessionController, QEMU process supervision, serial readiness, the 60-minute deadline, event-driven 20% battery cutoff, QMP shutdown request, bounded force-stop, disk lease, notifications, and shutdown status. Wi-Fi changes do not stop the guest.
+- Dashboard start/stop controls, status refresh, serial terminal, settings for guest RAM, vCPU count, and loopback HTTP port, and runtime diagnostics.
+- Home-screen widget start/stop actions and live service status.
+- Terminal password prompts use masked input; submitted input is cleared and terminal contents remain in memory only.
+- QemuLaunchConfig uses ARM virt TCG, a persistent VirtIO disk, serial console, QMP, and 127.0.0.1-only HTTP forwarding.
+- Android CI cross-builds QEMU for arm64-v8a, audits packaged libraries, builds the APK, runs unit tests and x86_64 emulator instrumentation. Alpine CI performs the guest boot, account, shell, persistence, and forwarding checks.
 
-## Outstanding gaps
+## Remaining validation
 
-- Complete CI verification of terminal, settings, diagnostics, and shutdown-reason updates. Startup remains fail-closed until ARM64 Android runtime validation.
-- Execute ARM64 QEMU on an ARM64 Android device or emulator and boot Alpine to the login prompt.
-- Add widget actions and physical-device measurements.
-- Complete first-run password setup over the Android serial terminal, verify login, package installation, storage controls, and Android-side localhost access. The seed root account is locked; the non-root account is created only after interactive first boot.
-- Measure boot time, RAM, and battery impact on physical ARM64 devices; LAN exposure and custom kernels remain later work.
-
-## Next engineering tasks
-
-1. Complete CI verification for the settings and diagnostics changes on the open PR.
-2. Run `QemuAndroidRuntimeInstrumentationTest` on a physical ARM64 Android device or a Linux ARM64 host that has a supported Android emulator binary; then attempt guest boot on that target.
-3. Run gradle -p android connectedDebugAndroidTest on an ARM64 Android device to validate QEMU execution and guest boot. Then start PocketOS, complete secure first-run setup and login in the terminal, and verify package installation, storage controls, and Android-side localhost access.
+- Run the ARM64 instrumentation suite on a physical ARM64 Android device. The current workspace has no adb/device connection, and CI only provides an x86_64 Android emulator.
+- After the runtime gate opens on that device, finish first-run account setup and login through the app terminal; verify package installation, storage controls, and Android-side localhost access.
+- Measure boot time, memory use, and battery impact on physical ARM64 hardware. LAN exposure and custom kernels remain later work.
+- Do not merge or release without explicit approval.
