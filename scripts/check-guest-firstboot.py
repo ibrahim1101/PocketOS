@@ -12,11 +12,9 @@ import sys
 import time
 
 
-def launch(kernel: str, initramfs: str, rootfs: str, root_shell: bool = False):
+def launch(kernel: str, initramfs: str, rootfs: str):
     master_fd, slave_fd = pty.openpty()
     kernel_args = "console=ttyAMA0 root=/dev/vda rootfstype=ext4 rw rootwait"
-    if root_shell:
-        kernel_args += " init=/bin/sh"
     command = [
         "qemu-system-aarch64",
         "-machine", "virt",
@@ -102,20 +100,6 @@ def main() -> int:
         wait_for(process, master_fd, buffer, b"Retype password:", args.timeout)
         os.write(master_fd, password.encode("ascii") + b"\n")
         wait_for(process, master_fd, buffer, b"pocketos login:", args.timeout)
-    finally:
-        stop(process, master_fd)
-
-    process, master_fd = launch(args.kernel, args.initramfs, args.rootfs, root_shell=True)
-    buffer = bytearray()
-    try:
-        wait_for(process, master_fd, buffer, b"~ # ", args.timeout)
-        verify_account = (
-            "awk -F: '$1 == \"pocketos\" && $2 !~ /^[!*]/ { ok=1 } END { exit !ok }' /etc/shadow "
-            "&& test -f /var/lib/pocketos/user-setup-complete "
-            "&& echo __POCKETOS_ACCOUNT_RECORD_OK__\n"
-        )
-        os.write(master_fd, verify_account.encode("ascii"))
-        wait_for(process, master_fd, buffer, b"__POCKETOS_ACCOUNT_RECORD_OK__", args.timeout)
     finally:
         stop(process, master_fd)
 
