@@ -86,16 +86,23 @@ def run_command(
     label: str,
     timeout: int,
 ) -> None:
-    marker = f"__POCKETOS_{label}__:"
-    payload = f"{command}; status=$?; printf '\\n{marker}%s\\n' \"$status\"\n"
+    marker = f"__POCKETOS_{label}__"
+    midpoint = len(marker) // 2
+    first, second = marker[:midpoint], marker[midpoint:]
+    payload = (
+        f"{command}; status=$?; "
+        f"printf '%s%s:%s\\n' '{first}' '{second}' \"$status\"\n"
+    )
     os.write(master_fd, payload.encode("utf-8"))
-    wait_for(process, master_fd, buffer, marker.encode(), time.monotonic() + timeout)
-    marker_at = buffer.rfind(marker.encode())
+    status_marker = f"{marker}:".encode("ascii")
+    deadline = time.monotonic() + timeout
+    wait_for(process, master_fd, buffer, status_marker, deadline)
+    marker_at = buffer.rfind(status_marker)
     line_end = buffer.find(b"\n", marker_at)
-    while line_end < 0:
-        wait_for(process, master_fd, buffer, b"\n", time.monotonic() + 2)
+    if line_end < 0:
+        wait_for(process, master_fd, buffer, b"\n", deadline)
         line_end = buffer.find(b"\n", marker_at)
-    status = buffer[marker_at + len(marker):line_end].strip()
+    status = buffer[marker_at + len(status_marker):line_end].strip()
     if status != b"0":
         raise RuntimeError(f"guest command failed ({label}, status={status.decode(errors='replace')})")
 
