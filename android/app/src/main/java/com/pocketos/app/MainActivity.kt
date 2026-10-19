@@ -296,6 +296,7 @@ class MainActivity : Activity() {
             deviceFreeSpace = storage.availableDeviceLabel,
             guestFreeSpace = storage.guestFreeSpaceLabel,
             lanExposureEnabled = settings.lanExposureEnabled,
+            recentEvents = DiagnosticsEventStore(java.io.File(filesDir, "diagnostics/events.log")).readLatest(),
         )
     }
 

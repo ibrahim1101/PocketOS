@@ -21,6 +21,7 @@ class ServerService : Service() {
     private lateinit var worker: Handler
     private lateinit var batteryMonitor: BatteryLevelMonitor
     private var currentStatus = "Stopped"
+    private lateinit var diagnosticEvents: DiagnosticsEventStore
     private val terminalInputReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: Intent?) {
             val input = intent?.getStringExtra(EXTRA_TERMINAL_INPUT) ?: return
@@ -32,6 +33,7 @@ class ServerService : Service() {
         super.onCreate()
         createNotificationChannel()
         lifecycle = VmLifecycle()
+        diagnosticEvents = DiagnosticsEventStore(File(filesDir, "diagnostics/events.log"))
         workerThread = HandlerThread("pocketos-vm-service").apply { start() }
         worker = Handler(workerThread.looper)
         val checkpoint = SessionProtection(
@@ -56,6 +58,7 @@ class ServerService : Service() {
                 )
             },
             onStateChanged = { state ->
+                diagnosticEvents.record(DiagnosticEventType.STATE_CHANGED, state, controller.lastStopReason)
                 val reason = if (state == VmState.STOPPED || state == VmState.FAILED) controller.lastStopReason else null
                 currentStatus = state.name.lowercase().replaceFirstChar { it.uppercase() } +
                     (reason?.let { " · $it" } ?: "")
@@ -83,6 +86,7 @@ class ServerService : Service() {
                 if (lifecycle.state == VmState.STOPPED || lifecycle.state == VmState.FAILED) stopSelf(startId)
             }
             ACTION_STOP -> worker.post {
+                diagnosticEvents.record(DiagnosticEventType.STOP_REQUESTED, lifecycle.state)
                 controller.stopByUser()
                 val reason = controller.lastStopReason
                 currentStatus = "Stopped" + (reason?.let { " · $it" } ?: "")
@@ -91,10 +95,12 @@ class ServerService : Service() {
                 stopSelf(startId)
             }
             ACTION_START, null -> {
+                diagnosticEvents.record(DiagnosticEventType.START_REQUESTED, lifecycle.state)
                 startForeground(NOTIFICATION_ID, buildNotification("Starting"))
                 worker.post {
                     val result = AndroidRuntimeValidation.evaluate(this)
                     if (!result.allowed) {
+                        diagnosticEvents.record(DiagnosticEventType.RUNTIME_GATE_BLOCKED, lifecycle.state)
                         currentStatus = "Blocked: ${result.reason}"
                         publishStatus(currentStatus)
                         updateNotification(currentStatus)

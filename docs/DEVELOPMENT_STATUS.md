@@ -16,11 +16,12 @@ Updated: 2026-10-19
 ## Implemented and CI-verified
 
 - Foreground service owns GuestSessionController, QEMU process supervision, serial readiness, the 60-minute deadline, event-driven 20% battery cutoff, QMP shutdown request, bounded force-stop, disk lease, notifications, and shutdown status. Wi-Fi changes do not stop the guest.
-- Dashboard start/stop controls, status refresh, serial terminal, guest RAM/vCPU/HTTP port settings, opt-in Wi-Fi LAN exposure, a persistent storage view, runtime diagnostics, and sanitized diagnostics export through Android's document picker. The export contains allow-listed host/runtime metadata only; terminal contents, credentials, and network addresses are excluded.
+- Dashboard start/stop controls, status refresh, serial terminal, guest RAM/vCPU/HTTP port settings, opt-in Wi-Fi LAN exposure, a persistent storage view, runtime diagnostics, and sanitized diagnostics export through Android's document picker. The export includes a bounded event history with enum-only event details; terminal contents, credentials, file paths, arbitrary error text, and network addresses are excluded.
 - Persistent storage screen reports raw guest image capacity, Android device free space, and ext4 guest filesystem free/used space. Guest filesystem metrics are read only while the exclusive disk lease is available; they are shown as unavailable while the VM is active.
 - User-selected ext4 disk export acquires the exclusive guest disk lease before opening the destination and copies the image byte for byte; Android unit tests verify it is blocked while a VM owns the disk.
 - Home-screen widget start/stop actions and live service status.
 - Terminal password prompts use masked input; submitted input is cleared and terminal contents remain in memory only.
+- A bounded private diagnostic event history records start/stop requests, runtime gate blocks, and lifecycle changes using timestamps and enum-only details; the export omits free-form runtime and terminal data.
 - QemuLaunchConfig uses ARM virt TCG, a persistent VirtIO disk, serial console, and QMP. HTTP forwarding binds to 127.0.0.1 by default; optional Wi-Fi LAN forwarding requires an explicit confirmation and binds to the active Wi-Fi IPv4 address.
 - Android CI cross-builds QEMU for arm64-v8a, audits packaged libraries, builds the APK, runs unit tests and x86_64 emulator instrumentation. Alpine CI performs the guest boot, account, shell, persistence, and forwarding checks.
 

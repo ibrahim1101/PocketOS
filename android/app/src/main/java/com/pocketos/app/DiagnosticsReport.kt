@@ -17,6 +17,7 @@ object DiagnosticsReport {
         deviceFreeSpace: String,
         guestFreeSpace: String,
         lanExposureEnabled: Boolean,
+        recentEvents: List<PocketOsDiagnosticEvent> = emptyList(),
     ): String {
         val status = when {
             vmStatus.contains("running", ignoreCase = true) -> "Running"
@@ -45,6 +46,8 @@ object DiagnosticsReport {
             "Device free space: $deviceFreeSpace",
             "Guest filesystem free space: $guestFreeSpace",
             "Network exposure: " + if (lanExposureEnabled) "Wi-Fi LAN (active IPv4 only)" else "Loopback only",
+            "Recent diagnostic events:",
+            *(recentEvents.takeLast(50).map { it.safeSummary() }.toTypedArray()),
             "",
             "Terminal contents and credentials are excluded.",
         ).joinToString("\n")
