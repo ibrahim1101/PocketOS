@@ -57,6 +57,7 @@ jobs:
       - name: Build and package Alpine Android guest assets
         run: |
           SIZE_MB=256 bash scripts/build-alpine-rootfs.sh "$RUNNER_TEMP/pocketos-guest.ext4"
+          bash scripts/check-guest-root-lock.sh "$RUNNER_TEMP/pocketos-guest.ext4"
           bash scripts/package-android-guest-assets.sh \
             "$RUNNER_TEMP/pocketos-guest.ext4" \
             android/app/src/main/assets/pocketos
@@ -137,6 +138,8 @@ jobs:
         run: python3 -m py_compile scripts/check-guest-shell.py scripts/check-guest-persistence.py scripts/check-guest-http.py
       - name: Build an ARM64 Alpine disk
         run: SIZE_MB=512 bash scripts/build-alpine-rootfs.sh "$RUNNER_TEMP/alpine-aarch64.ext4"
+      - name: Verify guest root account is locked
+        run: bash scripts/check-guest-root-lock.sh "$RUNNER_TEMP/alpine-aarch64.ext4"
       - name: Extract Alpine's QEMU virtual kernel
         run: debugfs -R "dump /boot/vmlinuz-virt $RUNNER_TEMP/vmlinuz-virt" "$RUNNER_TEMP/alpine-aarch64.ext4"
       - name: Extract matching Alpine initramfs

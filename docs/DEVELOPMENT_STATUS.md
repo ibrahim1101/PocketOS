@@ -8,7 +8,7 @@ Updated: 2026-10-18
 - Active branch: `feat/m1-linux-boot`; PR #1 remains open.
 - Latest fully passing CI revision: `59a4734b42cf65c52335a5159d84d5812029c43d` (run #142).
 - CI run #142 passed the Android ARM64 QEMU cross-build and APK audit, Android JVM unit tests and x86_64 bridge instrumentation, and the Alpine ARM64 boot, shell, persistence, and localhost HTTP checks. The ARM64 QEMU execution test is skipped on x86_64 because it requires an ARM64 app install. Run #141 separately confirmed that `ubuntu-24.04-arm` cannot install Google's Android emulator: `sdkmanager` reported `Failed to find package 'emulator'`, so the unsupported runner job was removed.
-- The APK contains QEMU 11.1.2 plus Alpine's kernel, matching initramfs, compressed ext4 seed disk, and SHA-256 manifest.
+- The APK contains QEMU 11.1.2 plus Alpine's kernel, matching initramfs, compressed ext4 seed disk, and SHA-256 manifest. The root password is explicitly locked in the generated seed image, and CI inspects both the APK seed source and the host-boot guest disk.
 - `GuestAssetInstaller` verifies packaged hashes and ext4 format, stages versioned boot assets, atomically expands the seed disk to app-private storage, preserves it across repeat installs, and has an app-context factory. Android instrumentation installs the real APK assets, checks the 256 MiB ext4 disk, and verifies repeat-install preservation.
 - `GuestDiskLease` obtains an exclusive OS file lock beside the guest disk. Unit and Android instrumentation tests reject a concurrent writer and verify the lease can be acquired after release.
 - `GuestReadinessProbe` detects Alpine's complete serial login prompt across chunks and ANSI output.
@@ -32,7 +32,7 @@ Updated: 2026-10-18
 - Wire the tested components, process supervisor, serial terminal, QMP shutdown, bounded recovery, timer, and battery monitor into the foreground service.
 - Execute ARM64 QEMU on an ARM64 Android device or emulator and boot Alpine to the login prompt.
 - Add dashboard controls, terminal, notifications, widget actions, diagnostics, and shutdown reason reporting.
-- Implement secure guest account setup, package installation, storage controls, and Android-side localhost access.
+- Implement first-run guest user setup, package installation, storage controls, and Android-side localhost access. The seed root account is locked; there is not yet a supported login account.
 - Measure boot time, RAM, and battery impact on physical ARM64 devices; LAN exposure and custom kernels remain later work.
 
 ## Next engineering tasks

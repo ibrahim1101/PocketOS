@@ -10,7 +10,7 @@ The cross-build downloads QEMU 11.1.2 from the pinned upstream archive and verif
 
 The APK contains an Android AArch64 PIE staged as `lib/arm64-v8a/libqemu-system-aarch64.so`. CI checks ELF machine, PIE type, `/system/bin/linker64`, required system libraries, and absence of RPATH/RUNPATH.
 
-The APK also contains Alpine's `vmlinuz-virt`, matching `initramfs-virt`, gzip-compressed ext4 seed disk, and SHA-256 manifest. `GuestAssetInstaller.forContext(context)` reads packaged assets, validates hashes, stores versioned boot assets in app-private storage, atomically expands and validates the disk, and preserves an existing disk on repeat install.
+The APK also contains Alpine's `vmlinuz-virt`, matching `initramfs-virt`, gzip-compressed ext4 seed disk, and SHA-256 manifest. The root account's password field is forcibly set to the locked marker in the image builder. CI checks the resulting ext4 image with `scripts/check-guest-root-lock.sh` in both the APK-seed and host-boot paths. First-run creation of a non-root login account is not implemented yet. `GuestAssetInstaller.forContext(context)` reads packaged assets, validates hashes, stores versioned boot assets in app-private storage, atomically expands and validates the disk, and preserves an existing disk on repeat install.
 
 `GuestDiskLease` creates and locks a persistent sibling lock file for the lifetime of a guest disk writer. JVM tests and Android instrumentation verify that a second writer is rejected until the lease is closed, after which the disk can be leased again.
 
