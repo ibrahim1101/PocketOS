@@ -78,6 +78,34 @@ def wait_for(
                 buffer.extend(chunk)
 
 
+def read_status_line(
+    process: subprocess.Popen[bytes],
+    master_fd: int,
+    buffer: bytearray,
+    marker: bytes,
+    deadline: float,
+) -> str:
+    while True:
+        start = buffer.find(marker)
+        if start >= 0:
+            line_start = start + len(marker)
+            line_end = buffer.find(b"\n", line_start)
+            if line_end >= 0:
+                return buffer[line_start:line_end].rstrip(b"\r").decode("ascii")
+        if process.poll() is not None:
+            raise RuntimeError(f"QEMU exited with status {process.returncode}")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"guest did not finish status marker {marker!r}")
+        ready, _, _ = select.select([master_fd], [], [], 0.2)
+        if ready:
+            try:
+                chunk = os.read(master_fd, 8192)
+            except BlockingIOError:
+                continue
+            if chunk:
+                buffer.extend(chunk)
+
+
 def run_command(
     process: subprocess.Popen[bytes],
     master_fd: int,
@@ -95,16 +123,11 @@ def run_command(
     )
     os.write(master_fd, payload.encode("utf-8"))
     status_marker = f"{marker}:".encode("ascii")
-    deadline = time.monotonic() + timeout
-    wait_for(process, master_fd, buffer, status_marker, deadline)
-    marker_at = buffer.rfind(status_marker)
-    line_end = buffer.find(b"\n", marker_at)
-    if line_end < 0:
-        wait_for(process, master_fd, buffer, b"\n", deadline)
-        line_end = buffer.find(b"\n", marker_at)
-    status = buffer[marker_at + len(status_marker):line_end].strip()
-    if status != b"0":
-        raise RuntimeError(f"guest command failed ({label}, status={status.decode(errors='replace')})")
+    status = read_status_line(
+        process, master_fd, buffer, status_marker, time.monotonic() + timeout
+    )
+    if status.strip() != "0":
+        raise RuntimeError(f"guest command failed ({label}, status={status.strip()})")
 
 
 def verify_loopback_listener(port: int) -> None:
