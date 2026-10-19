@@ -228,3 +228,10 @@ jobs:
           --initramfs "$RUNNER_TEMP/initramfs-virt"
           --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
           --timeout 120
+      - name: Install Python and verify a guest HTTP workload
+        run: >-
+          python3 scripts/check-guest-python-http.py
+          --kernel "$RUNNER_TEMP/vmlinuz-virt"
+          --initramfs "$RUNNER_TEMP/initramfs-virt"
+          --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
+          --timeout 240

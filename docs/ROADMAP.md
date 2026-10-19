@@ -36,3 +36,7 @@
 - Explicit Wi-Fi LAN exposure bound to the active Wi-Fi address
 - CI localhost-forwarding and loopback-binding checks
 - Physical-device validation remains required
+
+## M9 — Real server workloads
+- CI installs Python 3 in the Alpine guest, runs a Python HTTP server, and verifies its response through localhost-only QEMU forwarding
+- Physical-device validation of package installation and workloads remains required
