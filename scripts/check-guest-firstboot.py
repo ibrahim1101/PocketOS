@@ -105,21 +105,25 @@ def main() -> int:
 
     process, master_fd = launch(args.kernel, args.initramfs, args.rootfs)
     buffer = bytearray()
+    stage = "login prompt after restart"
     try:
         wait_for(process, master_fd, buffer, b"pocketos login:", args.timeout)
         os.write(master_fd, b"pocketos\n")
+        stage = "password prompt"
         wait_for(process, master_fd, buffer, b"Password:", args.timeout)
         os.write(master_fd, password.encode("ascii") + b"\n")
+        stage = "authenticated user shell"
         wait_for(process, master_fd, buffer, b"$ ", args.timeout)
         os.write(
             master_fd,
             b'test "$(id -un)" = pocketos && test "$(id -u)" != 0 '
             b"&& echo __POCKETOS_USER_LOGIN_OK__\n",
         )
+        stage = "non-root shell verification"
         wait_for(process, master_fd, buffer, b"__POCKETOS_USER_LOGIN_OK__", args.timeout)
     except (RuntimeError, TimeoutError):
         # Do not print the serial transcript: it may contain terminal input on guest failure.
-        print("First-boot account setup or non-root login failed.", file=sys.stderr)
+        print(f"First-boot account setup or non-root login failed at {stage}.", file=sys.stderr)
         return 1
     finally:
         stop(process, master_fd)
