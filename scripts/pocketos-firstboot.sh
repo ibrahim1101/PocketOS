@@ -19,6 +19,8 @@ if [ ! -e "$marker" ]; then
   marker_tmp="$marker.tmp.$$"
   (umask 077; : > "$marker_tmp")
   mv "$marker_tmp" "$marker"
+  # Persist the password and completion marker before any restart can interrupt the guest.
+  sync
   printf 'POCKETOS_FIRST_BOOT_COMPLETE\n'
 fi
 
