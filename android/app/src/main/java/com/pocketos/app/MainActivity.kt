@@ -79,6 +79,7 @@ class MainActivity : Activity() {
         column.addView(stopButton, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         val toolsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         toolsRow.addView(Button(this).apply { text = "Settings"; setOnClickListener { showSettings() } })
+        toolsRow.addView(Button(this).apply { text = "Storage"; setOnClickListener { showStorage() } })
         toolsRow.addView(Button(this).apply { text = "Diagnostics"; setOnClickListener { showDiagnostics() } })
         column.addView(toolsRow)
         column.addView(label(
@@ -179,10 +180,29 @@ class MainActivity : Activity() {
             .setNegativeButton("Cancel", null).show()
     }
 
+    private fun storageStatus(): GuestStorageStatus =
+        GuestStorageStatus.read(java.io.File(filesDir, "guest/rootfs.ext4"), filesDir)
+
+    private fun showStorage() {
+        val storage = storageStatus()
+        val details = buildList {
+            add("Persistent guest disk capacity: " + storage.diskCapacityLabel)
+            add("Device free space: " + storage.availableDeviceLabel)
+            if (storage.lowDeviceSpace) {
+                add("Low device storage may prevent guest writes or future asset installation.")
+            }
+            add("The disk stays in private app storage across guest restarts.")
+            add("Device free space is not the guest filesystem's free space.")
+            add("Disk resizing, backup, and export are not enabled yet.")
+        }.joinToString("\\n")
+        AlertDialog.Builder(this).setTitle("Storage").setMessage(details)
+            .setPositiveButton("OK", null).show()
+    }
+
     private fun showDiagnostics() {
         val memoryInfo = android.app.ActivityManager.MemoryInfo()
         getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memoryInfo)
-        val disk = java.io.File(filesDir, "guest/rootfs.ext4")
+        val storage = storageStatus()
         val gate = AndroidRuntimeValidation.evaluate(this)
         val details = listOf(
             "VM status: $vmStatus",
@@ -192,7 +212,8 @@ class MainActivity : Activity() {
             "QEMU execution evidence: ${gate.qemuExecutionVerified}",
             "Guest boot evidence: ${gate.guestBootVerified}",
             "Available host memory: ${memoryInfo.availMem / (1024 * 1024)} MiB",
-            "Persistent guest disk: " + if (disk.isFile) "${disk.length() / (1024 * 1024)} MiB installed" else "not installed",
+            "Persistent guest disk capacity: " + storage.diskCapacityLabel,
+            "Device free space: " + storage.availableDeviceLabel,
             "HTTP forwarding binds to 127.0.0.1 only",
         ).joinToString("\n")
         AlertDialog.Builder(this).setTitle("Diagnostics").setMessage(details).setPositiveButton("OK", null).show()
