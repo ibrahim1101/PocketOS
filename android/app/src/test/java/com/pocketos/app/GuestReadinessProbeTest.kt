@@ -38,6 +38,7 @@ class GuestReadinessProbeTest {
     @Test
     fun doesNotTreatIncompleteOrUnrelatedSetupTextAsReady() {
         val probe = GuestReadinessProbe()
+        assertFalse(probe.onSerialOutput("PocketOS first boot: creating the pocketos account".toByteArray()))
         assertFalse(probe.onSerialOutput("New pass".toByteArray()))
         assertFalse(probe.onSerialOutput("not New password: ".toByteArray()))
     }

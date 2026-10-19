@@ -34,6 +34,11 @@ The APK asset install path has additionally been exercised on the Android x86_64
 - QemuLaunchConfig unit tests cover virt TCG, kernel/initramfs, persistent VirtIO block, serial, QMP, and a localhost-only HTTP forward.
 - None of these tests boots QEMU or Alpine inside Android.
 
+
+## First-run account validation
+
+The guest-boot CI job drives the hidden `passwd` prompts over QEMU serial using a random, ephemeral test password. The checker does not print the serial transcript or credential. It verifies the persistent account record, then boots again, logs in through the normal serial login, and confirms the shell runs as non-root. This host-side proof does not mean Android serial input is integrated; app setup remains blocked on the interactive terminal and service connection.
+
 ## Runtime integration constraints
 
 The service must run in the dedicated `:vm` process as a foreground service while the guest is active; launch QEMU from the APK-extracted native-library directory; use app-private working storage and the persistent guest disk; keep serial and diagnostics separate; request graceful QMP shutdown before bounded force termination; and bind localhost forwarding to loopback by default.
