@@ -56,7 +56,9 @@ class ServerService : Service() {
                 )
             },
             onStateChanged = { state ->
-                currentStatus = state.name.lowercase().replaceFirstChar { it.uppercase() }
+                val reason = if (state == VmState.STOPPED || state == VmState.FAILED) controller.lastStopReason else null
+                currentStatus = state.name.lowercase().replaceFirstChar { it.uppercase() } +
+                    (reason?.let { " · $it" } ?: "")
                 publishStatus(currentStatus)
                 updateNotification(currentStatus)
             },
@@ -76,9 +78,14 @@ class ServerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_QUERY -> {
+                publishStatus(currentStatus)
+                if (lifecycle.state == VmState.STOPPED || lifecycle.state == VmState.FAILED) stopSelf(startId)
+            }
             ACTION_STOP -> worker.post {
                 controller.stopByUser()
-                currentStatus = "Stopped"
+                val reason = controller.lastStopReason
+                currentStatus = "Stopped" + (reason?.let { " · $it" } ?: "")
                 publishStatus(currentStatus)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf(startId)
@@ -127,7 +134,11 @@ class ServerService : Service() {
         qmpSocket.delete()
         val executable = File(applicationInfo.nativeLibraryDir, "libqemu-system-aarch64.so")
         check(executable.isFile && executable.canExecute()) { "Packaged ARM64 QEMU executable is unavailable" }
-        val config = QemuLaunchConfig(executable, assets.kernel, assets.initramfs, assets.rootDisk, qmpSocket)
+        val settings = GuestRuntimeSettings.load(getSharedPreferences(SETTINGS_PREFS, MODE_PRIVATE))
+        val config = QemuLaunchConfig(
+            executable, assets.kernel, assets.initramfs, assets.rootDisk, qmpSocket,
+            memoryMiB = settings.memoryMiB, vcpus = settings.vcpus, hostHttpPort = settings.hostHttpPort,
+        )
         return PreparedGuest(
             command = config.toCommand(),
             workingDirectory = filesDir,
@@ -174,6 +185,7 @@ class ServerService : Service() {
     }
 
     companion object {
+        const val ACTION_QUERY = "com.pocketos.app.QUERY_VM"
         const val ACTION_START = "com.pocketos.app.START_VM"
         const val ACTION_STOP = "com.pocketos.app.STOP_VM"
         const val ACTION_STATUS = "com.pocketos.app.VM_STATUS"
@@ -182,6 +194,7 @@ class ServerService : Service() {
         const val EXTRA_STATUS = "status"
         const val EXTRA_TERMINAL_INPUT = "terminal_input"
         const val EXTRA_TERMINAL_OUTPUT = "terminal_output"
+        private const val SETTINGS_PREFS = "guest_settings"
         private const val TAG = "PocketOS"
         private const val CHANNEL_ID = "pocketos-vm"
         private const val NOTIFICATION_ID = 4101

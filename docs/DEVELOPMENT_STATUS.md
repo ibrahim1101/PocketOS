@@ -25,18 +25,18 @@ Updated: 2026-10-19
 - CI cross-builds pinned QEMU 11.1.2 for arm64-v8a with checksum-pinned dependencies and audits packaged ELF architecture, linker, and runtime dependencies.
 - CI boots Alpine under host QEMU, runs Linux shell commands, verifies ext4 persistence across restart, and tests localhost HTTP forwarding.
 - Installer, readiness, session protection, and lifecycle coordination are tested components. `GuestSessionController` composes preparation, process launch, serial readiness, the deadline, battery cutoff, QMP shutdown, bounded force-stop, and disk-lease cleanup. Controller lifecycle and runtime-gate tests pass in CI.
-- The activity exposes start/stop controls and terminal input/output. Startup remains blocked until ARM64 Android validation passes. The widget still only opens the app.
+- The activity exposes start/stop controls, serial terminal input/output, persistent guest memory/vCPU/loopback-port settings, and runtime diagnostics. Service status refreshes when the activity returns; stop reasons are shown in terminal service status. Startup remains blocked until ARM64 Android validation passes. The widget still only opens the app.
 
 ## Outstanding gaps
 
-- Complete CI verification of the terminal dashboard changes. Startup remains fail-closed until ARM64 Android runtime validation.
+- Complete CI verification of terminal, settings, diagnostics, and shutdown-reason updates. Startup remains fail-closed until ARM64 Android runtime validation.
 - Execute ARM64 QEMU on an ARM64 Android device or emulator and boot Alpine to the login prompt.
-- Add guest settings, diagnostics, widget actions, and expanded shutdown reason reporting.
+- Add widget actions and physical-device measurements.
 - Complete first-run password setup over the Android serial terminal, verify login, package installation, storage controls, and Android-side localhost access. The seed root account is locked; the non-root account is created only after interactive first boot.
 - Measure boot time, RAM, and battery impact on physical ARM64 devices; LAN exposure and custom kernels remain later work.
 
 ## Next engineering tasks
 
-1. Integrate the tested coordinator and process boundary into service lifecycle tests while preserving fail-closed startup until ARM64 validation.
+1. Complete CI verification for the settings and diagnostics changes on the open PR.
 2. Run `QemuAndroidRuntimeInstrumentationTest` on a physical ARM64 Android device or a Linux ARM64 host that has a supported Android emulator binary; then attempt guest boot on that target.
 3. Run the Android terminal against a validated ARM64 guest to complete secure first-run setup and login, then verify package installation, storage controls, and Android-side localhost access.

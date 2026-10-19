@@ -2,6 +2,7 @@ package com.pocketos.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -17,6 +18,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 
 class MainActivity : Activity() {
     private lateinit var statusLabel: TextView
@@ -75,6 +77,10 @@ class MainActivity : Activity() {
         }
         column.addView(startButton, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         column.addView(stopButton, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        val toolsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        toolsRow.addView(Button(this).apply { text = "Settings"; setOnClickListener { showSettings() } })
+        toolsRow.addView(Button(this).apply { text = "Diagnostics"; setOnClickListener { showDiagnostics() } })
+        column.addView(toolsRow)
         column.addView(label(
             "Startup requires ARM64 Android QEMU execution and guest boot validation. Session limit: 60 minutes after readiness; battery cutoff: 20%; Wi-Fi loss does not stop the guest.",
             13f,
@@ -92,7 +98,7 @@ class MainActivity : Activity() {
         val terminalRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         terminalInput = EditText(this).apply {
             hint = "Guest input"
-            singleLine = true
+            isSingleLine = true
             isEnabled = false
             setOnEditorActionListener { _, _, _ -> sendTerminalInput(); true }
         }
@@ -120,6 +126,7 @@ class MainActivity : Activity() {
             registerReceiver(statusReceiver, filter)
         }
         renderButtons()
+        startService(Intent(this, ServerService::class.java).setAction(ServerService.ACTION_QUERY))
     }
 
     override fun onStop() {
@@ -142,6 +149,61 @@ class MainActivity : Activity() {
         stopButton.isEnabled = running
         terminalInput.isEnabled = running
         terminalSend.isEnabled = running
+    }
+
+    private fun showSettings() {
+        val current = GuestRuntimeSettings.load(getSharedPreferences(SETTINGS_PREFS, MODE_PRIVATE))
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 8, 24, 0) }
+        fun field(label: String, value: Int): EditText {
+            val input = EditText(this).apply {
+                hint = label
+                inputType = InputType.TYPE_CLASS_NUMBER
+                setText(value.toString())
+            }
+            form.addView(input)
+            return input
+        }
+        val memory = field("Guest memory MiB (512–4096)", current.memoryMiB)
+        val cpus = field("Guest vCPUs (1–4)", current.vcpus)
+        val port = field("Loopback HTTP port (1024–65535)", current.hostHttpPort)
+        AlertDialog.Builder(this).setTitle("Guest settings").setView(form)
+            .setPositiveButton("Save") { _, _ ->
+                runCatching {
+                    GuestRuntimeSettings(
+                        memoryMiB = memory.text.toString().toInt(),
+                        vcpus = cpus.text.toString().toInt(),
+                        hostHttpPort = port.text.toString().toInt(),
+                    ).save(getSharedPreferences(SETTINGS_PREFS, MODE_PRIVATE))
+                }.onSuccess {
+                    Toast.makeText(this, "Settings saved for the next guest start", Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    Toast.makeText(this, it.message ?: "Invalid settings", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun showDiagnostics() {
+        val memoryInfo = android.app.ActivityManager.MemoryInfo()
+        getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memoryInfo)
+        val disk = java.io.File(filesDir, "guest/rootfs.ext4")
+        val gate = AndroidRuntimeValidation.evaluate(
+            Build.SUPPORTED_ABIS.toList(),
+            ServerService.QEMU_EXECUTION_VERIFIED_ON_ANDROID,
+            ServerService.GUEST_BOOT_VERIFIED_ON_ANDROID,
+        )
+        val details = listOf(
+            "VM status: $vmStatus",
+            "Supported ABIs: ${Build.SUPPORTED_ABIS.joinToString()}",
+            "Android API: ${Build.VERSION.SDK_INT}",
+            "Runtime gate: ${gate.reason}",
+            "QEMU execution evidence: ${ServerService.QEMU_EXECUTION_VERIFIED_ON_ANDROID}",
+            "Guest boot evidence: ${ServerService.GUEST_BOOT_VERIFIED_ON_ANDROID}",
+            "Available host memory: ${memoryInfo.availMem / (1024 * 1024)} MiB",
+            "Persistent guest disk: " + if (disk.isFile) "${disk.length() / (1024 * 1024)} MiB installed" else "not installed",
+            "HTTP forwarding binds to 127.0.0.1 only",
+        ).joinToString("\n")
+        AlertDialog.Builder(this).setTitle("Diagnostics").setMessage(details).setPositiveButton("OK", null).show()
     }
 
     private fun appendTerminal(text: String) {
@@ -179,6 +241,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_NOTIFICATIONS = 42
+        private const val SETTINGS_PREFS = "guest_settings"
         private const val MAX_TERMINAL_CHARS = 32_768
     }
 }
