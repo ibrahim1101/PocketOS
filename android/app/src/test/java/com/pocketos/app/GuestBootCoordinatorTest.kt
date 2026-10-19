@@ -8,7 +8,7 @@ import org.junit.Test
 
 class GuestBootCoordinatorTest {
     @Test
-    fun processStartDoesNotMarkRunningUntilLoginPromptAndStartsDeadlineAtReadiness() {
+    fun processStartDoesNotMarkRunningUntilGuestIsReadyAndStartsDeadlineAtReadiness() {
         val lifecycle = VmLifecycle()
         val store = FakeStore()
         val clock = FakeClock(1_000)
@@ -32,7 +32,7 @@ class GuestBootCoordinatorTest {
         assertEquals(VmState.BOOTING, lifecycle.state)
         assertEquals(
             GuestBootEvent.READY,
-            coordinator.onSerialOutput("pocketos login: ".toByteArray(), 80),
+            coordinator.onSerialOutput("POCKETOS_FIRST_BOOT: set a password for account pocketos\\r\\n".toByteArray(), 80),
         )
         assertEquals(VmState.RUNNING, lifecycle.state)
         assertEquals(4_000L, store.checkpoint?.startedAtElapsedMs)

@@ -144,7 +144,7 @@ jobs:
         run: debugfs -R "dump /boot/vmlinuz-virt $RUNNER_TEMP/vmlinuz-virt" "$RUNNER_TEMP/alpine-aarch64.ext4"
       - name: Extract matching Alpine initramfs
         run: debugfs -R "dump /boot/initramfs-virt $RUNNER_TEMP/initramfs-virt" "$RUNNER_TEMP/alpine-aarch64.ext4"
-      - name: Boot guest to serial login prompt
+      - name: Boot guest to first-run account setup prompt
         env:
           KERNEL: ${{ runner.temp }}/vmlinuz-virt
           INITRAMFS: ${{ runner.temp }}/initramfs-virt

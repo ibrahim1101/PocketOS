@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Boot the Alpine disk under QEMU and require its serial login prompt.
+# Boot the Alpine disk under QEMU and require its first-run password setup prompt.
 set -euo pipefail
 : "${KERNEL:?Set KERNEL to the ARM64 Linux Image extracted from the guest disk}"
 : "${INITRAMFS:?Set INITRAMFS to the matching Alpine initramfs image}"
@@ -24,16 +24,16 @@ qemu-system-aarch64 \
 qemu_pid=$!
 deadline=$((SECONDS + BOOT_TIMEOUT_SECONDS))
 while kill -0 "$qemu_pid" 2>/dev/null && (( SECONDS < deadline )); do
-  if grep -Fq "pocketos login:" "$log"; then
+  if grep -Fq "POCKETOS_FIRST_BOOT: set a password for account pocketos" "$log"; then
     break
   fi
   sleep 1
 done
-if grep -Fq "pocketos login:" "$log"; then
+if grep -Fq "POCKETOS_FIRST_BOOT: set a password for account pocketos" "$log"; then
   kill -TERM "$qemu_pid" 2>/dev/null || true
   wait "$qemu_pid" 2>/dev/null || true
-  grep -F "pocketos login:" "$log" | tail -n 1
-  echo "Alpine guest reached its serial login prompt."
+  grep -F "POCKETOS_FIRST_BOOT: set a password for account pocketos" "$log" | tail -n 1
+  echo "Alpine guest reached its first-run password setup prompt."
   exit 0
 fi
 kill -TERM "$qemu_pid" 2>/dev/null || true

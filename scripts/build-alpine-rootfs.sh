@@ -2,6 +2,7 @@
 # Build an Alpine ARM64 root disk for QEMU's virt machine.
 # Requirements: Docker with linux/arm64 support (native or binfmt emulation).
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="${1:-$PWD/out/alpine-aarch64.ext4}"
 SIZE_MB="${SIZE_MB:-512}"
 ALPINE_TAG="${ALPINE_TAG:-3.22}"
@@ -22,7 +23,7 @@ mkdir -p "$(dirname "$OUT")"
 OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 [[ ! -e "$OUT" ]] || { echo "Refusing to overwrite $OUT" >&2; exit 2; }
 echo "Building Alpine $ALPINE_TAG ARM64 disk ($SIZE_MB MiB)..."
-docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$ALPINE_REPOSITORY_BRANCH" -e OUTPUT_UID="$(id -u)" -e OUTPUT_GID="$(id -g)" -v "$(dirname "$OUT"):/output" -e OUTPUT_NAME="$(basename "$OUT")" "alpine:$ALPINE_TAG" sh -euc '
+docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$ALPINE_REPOSITORY_BRANCH" -e OUTPUT_UID="$(id -u)" -e OUTPUT_GID="$(id -g)" -v "$(dirname "$OUT"):/output" -v "$SCRIPT_DIR:/source/scripts:ro" -e OUTPUT_NAME="$(basename "$OUT")" "alpine:$ALPINE_TAG" sh -euc '
   apk add --no-cache e2fsprogs
   mkdir -p /guest/etc/apk/keys /guest/etc/network /guest/etc/runlevels/default /guest/etc/runlevels/boot /guest/etc/runlevels/sysinit
   cp /etc/apk/keys/* /guest/etc/apk/keys/
@@ -33,7 +34,9 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   grep -q "^root:!:" /guest/etc/shadow
   printf "pocketos\n" > /guest/etc/hostname
   printf "auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet dhcp\n" > /guest/etc/network/interfaces
-  printf "ttyAMA0::respawn:/sbin/getty -L 115200 ttyAMA0 vt100\n" >> /guest/etc/inittab
+  mkdir -p /guest/usr/local/sbin
+  install -m 755 /source/scripts/pocketos-firstboot.sh /guest/usr/local/sbin/pocketos-firstboot
+  printf "ttyAMA0::respawn:/usr/local/sbin/pocketos-firstboot\n" >> /guest/etc/inittab
   ln -sf /etc/init.d/networking /guest/etc/runlevels/boot/networking
   ln -sf /etc/init.d/hostname /guest/etc/runlevels/boot/hostname
   ln -sf /etc/init.d/devfs /guest/etc/runlevels/sysinit/devfs

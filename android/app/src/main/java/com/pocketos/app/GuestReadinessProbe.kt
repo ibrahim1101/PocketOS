@@ -1,7 +1,7 @@
 package com.pocketos.app
 
 /**
- * Detects Alpine's serial login prompt as a guest-ready boundary.
+ * Detects Alpine's first-run account-setup or normal login prompt as a guest-ready boundary.
  * Feed raw serial output chunks; readiness becomes true only after a complete prompt.
  */
 class GuestReadinessProbe(
@@ -23,13 +23,14 @@ class GuestReadinessProbe(
             serialTail.delete(0, serialTail.length - maxRetainedCharacters)
         }
         val cleanTail = ANSI_ESCAPE.replace(serialTail, "")
-        isReady = LOGIN_PROMPT.containsMatchIn(cleanTail)
+        isReady = FIRST_BOOT_PROMPT.containsMatchIn(cleanTail) || LOGIN_PROMPT.containsMatchIn(cleanTail)
         return isReady
     }
 
     companion object {
         private const val MIN_PROMPT_LENGTH = 7
         private val ANSI_ESCAPE = Regex("\\x1B\\[[0-?]*[ -/]*[@-~]")
+        private val FIRST_BOOT_PROMPT = Regex("(?m)^POCKETOS_FIRST_BOOT: set a password for account pocketos\\s*$")
         private val LOGIN_PROMPT = Regex("(?im)(?:^|[\\r\\n])(?:(?!Last\\b)[A-Za-z0-9_.-]+\\s+)?login:\\s*$")
     }
 }
