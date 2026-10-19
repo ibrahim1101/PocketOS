@@ -29,17 +29,17 @@ class GuestReadinessProbeTest {
     }
 
     @Test
-    fun recognizesFirstBootCredentialSetupPromptAcrossChunks() {
+    fun recognizesFirstBootPasswordPromptAcrossChunks() {
         val probe = GuestReadinessProbe()
-        assertFalse(probe.onSerialOutput("kernel ready\r\nPOCKETOS_FIRST_BOOT: set a password for account ".toByteArray()))
-        assertTrue(probe.onSerialOutput("pocketos\r\n".toByteArray()))
+        assertFalse(probe.onSerialOutput("kernel ready\r\nNew pass".toByteArray()))
+        assertTrue(probe.onSerialOutput("word: ".toByteArray()))
     }
 
     @Test
     fun doesNotTreatIncompleteOrUnrelatedSetupTextAsReady() {
         val probe = GuestReadinessProbe()
-        assertFalse(probe.onSerialOutput("POCKETOS_FIRST_BOOT: set a password".toByteArray()))
-        assertFalse(probe.onSerialOutput("not POCKETOS_FIRST_BOOT: set a password for account pocketos".toByteArray()))
+        assertFalse(probe.onSerialOutput("New pass".toByteArray()))
+        assertFalse(probe.onSerialOutput("not New password: ".toByteArray()))
     }
 
     @Test

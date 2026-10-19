@@ -4,7 +4,7 @@ set -eu
 
 marker=/var/lib/pocketos/user-setup-complete
 if [ ! -e "$marker" ]; then
-  printf '\nPOCKETOS_FIRST_BOOT: set a password for account pocketos\n'
+  printf '\nPocketOS first boot: creating the pocketos account\n'
   if ! id pocketos >/dev/null 2>&1; then
     adduser -D -h /home/pocketos -s /bin/ash pocketos
   fi

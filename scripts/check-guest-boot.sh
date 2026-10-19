@@ -24,15 +24,15 @@ qemu-system-aarch64 \
 qemu_pid=$!
 deadline=$((SECONDS + BOOT_TIMEOUT_SECONDS))
 while kill -0 "$qemu_pid" 2>/dev/null && (( SECONDS < deadline )); do
-  if grep -Fq "POCKETOS_FIRST_BOOT: set a password for account pocketos" "$log"; then
+  if grep -Fq "New password:" "$log"; then
     break
   fi
   sleep 1
 done
-if grep -Fq "POCKETOS_FIRST_BOOT: set a password for account pocketos" "$log"; then
+if grep -Fq "New password:" "$log"; then
   kill -TERM "$qemu_pid" 2>/dev/null || true
   wait "$qemu_pid" 2>/dev/null || true
-  grep -F "POCKETOS_FIRST_BOOT: set a password for account pocketos" "$log" | tail -n 1
+  grep -F "New password:" "$log" | tail -n 1
   echo "Alpine guest reached its first-run password setup prompt."
   exit 0
 fi

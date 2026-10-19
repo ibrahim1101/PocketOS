@@ -16,7 +16,7 @@ The APK also contains Alpine's `vmlinuz-virt`, matching `initramfs-virt`, gzip-c
 
 ## Guest readiness and session protection
 
-`GuestReadinessProbe` detects the complete first-run account setup prompt or Alpine login prompt across serial chunks, removes ANSI sequences, and avoids treating `Last login:` as readiness.
+`GuestReadinessProbe` detects the complete first-run password prompt or Alpine login prompt across serial chunks, removes ANSI sequences, and avoids treating `Last login:` as readiness.
 
 `SessionProtection` stores a monotonic elapsed-realtime start and deadline through a `SessionCheckpointStore`. SharedPreferences commits the deadline before use. Recovery preserves the existing deadline rather than granting another hour; a checkpoint from before device reboot expires. Defaults remain 60 minutes, 20% battery cutoff, and no-stop-on-Wi-Fi-disconnect.
 
@@ -38,13 +38,13 @@ The APK asset install path has additionally been exercised on the Android x86_64
 
 The service must run in the dedicated `:vm` process as a foreground service while the guest is active; launch QEMU from the APK-extracted native-library directory; use app-private working storage and the persistent guest disk; keep serial and diagnostics separate; request graceful QMP shutdown before bounded force termination; and bind localhost forwarding to loopback by default.
 
-The service may transition to RUNNING only after the first-run setup or serial login prompt is detected and the deadline is stored. Low battery blocks startup and requests shutdown at or below 20%. ARM64 Android execution and secure guest login remain unverified, so service startup stays disabled.
+The service may transition to RUNNING only after the first-run password prompt or serial login prompt is detected and the deadline is stored. Low battery blocks startup and requests shutdown at or below 20%. ARM64 Android execution and secure guest login remain unverified, so service startup stays disabled.
 
 ## Next proof gates
 
 1. Integrate installer, process supervisor, coordinator, battery monitor, and deadline store into foreground-service lifecycle tests.
 2. Run QEMU on ARM64 Android and boot the packaged Alpine guest.
-3. Bridge serial input/output, complete first-run account setup interactively, and verify login, package installation, and disk persistence.
+3. Bridge serial input/output, complete first-run password setup interactively, and verify login, package installation, and disk persistence.
 4. Verify QMP shutdown, timer cutoff, battery cutoff, and physical-device performance.
 
 Until ARM64 execution and guest boot pass, PocketOS must describe Android Linux startup as unimplemented.
