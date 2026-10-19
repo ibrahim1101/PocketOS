@@ -6,6 +6,7 @@ import argparse
 import os
 import pty
 import select
+import signal
 import subprocess
 import sys
 import termios
@@ -137,26 +138,36 @@ def main() -> int:
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
 
+    def handle_timeout(signum: int, frame: object) -> None:
+        raise TimeoutError("Python guest workload received the CI watchdog signal")
+
+    signal.signal(signal.SIGTERM, handle_timeout)
+
+    print("Starting Alpine guest for Python workload validation.", flush=True)
     process, master_fd = launch(args.kernel, args.initramfs, args.rootfs)
     buffer = bytearray()
     try:
         wait_for(process, master_fd, buffer, SHELL_PROMPT, time.monotonic() + args.timeout)
+        print("Guest shell ready; configuring DHCP.", flush=True)
         run_command(
             process, master_fd, buffer,
             "ip link set eth0 up && udhcpc -n -q -t 5 -T 1 -i eth0",
             "DHCP_READY", args.timeout,
         )
+        print("Guest networking ready; installing Python 3.", flush=True)
         run_command(
             process, master_fd, buffer,
             f"apk update >{APK_LOG} 2>&1 && apk add --no-progress python3 >>{APK_LOG} 2>&1 "
             f"|| {{ tail -n 40 {APK_LOG}; false; }}",
             "PYTHON_INSTALLED", args.timeout,
         )
+        print("Python 3 installed; verifying interpreter.", flush=True)
         run_command(
             process, master_fd, buffer,
             "python3 -c 'import sys; assert sys.version_info.major == 3; print(sys.version)'",
             "PYTHON_RUNS", args.timeout,
         )
+        print("Starting Python HTTP server in guest.", flush=True)
         run_command(
             process, master_fd, buffer,
             "mkdir -p /tmp/pocketos-python-www && "
@@ -168,6 +179,7 @@ def main() -> int:
             "PYTHON_SERVER_READY", args.timeout,
         )
         verify_loopback_listener(HOST_PORT)
+        print("Python HTTP server started; checking localhost forwarding.", flush=True)
         deadline = time.monotonic() + min(args.timeout, 45)
         last_error: Exception | None = None
         while time.monotonic() < deadline:
