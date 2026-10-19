@@ -1,10 +1,10 @@
 # Android QEMU integration
 
-Status: Android ARM64 QEMU and Alpine guest assets are built and packaged. The app-private installer, serial readiness probe, session-protection primitives, and lifecycle coordinator are unit-tested. Android-side QEMU execution, guest boot, and service integration remain unverified; the VM service remains fail-closed.
+Status: Android ARM64 QEMU and Alpine guest assets are built and packaged. The generated guest image locks the root password, verified directly from both ext4 images in CI. The app-private installer, serial readiness probe, session-protection primitives, and lifecycle coordinator are unit-tested. Android-side QEMU execution, guest boot, and service integration remain unverified; the VM service remains fail-closed.
 
 ## Verified build and package boundary
 
-CI run #138 passed the pinned QEMU source fetch, Android ARM64 cross-build, APK assembly, native dependency audit, Android unit and x86_64 instrumentation tests, and host Alpine guest gates.
+CI run #144 passed the pinned QEMU source fetch, Android ARM64 cross-build, APK assembly, native dependency audit, Android unit and x86_64 instrumentation tests, root-lock validation against the APK seed image and host-boot image, and host Alpine guest gates.
 
 The cross-build downloads QEMU 11.1.2 from the pinned upstream archive and verifies SHA-256 `731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016`. It builds checksum-pinned libiconv, libffi, PCRE2, GLib, pixman, and libslirp static dependencies. A Bionic compatibility shim provides QEMU's temporary POSIX shared-memory file descriptor using an immediately unlinked file in its working directory.
 
