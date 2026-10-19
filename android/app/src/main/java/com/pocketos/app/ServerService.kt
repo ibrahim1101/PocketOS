@@ -93,11 +93,7 @@ class ServerService : Service() {
             ACTION_START, null -> {
                 startForeground(NOTIFICATION_ID, buildNotification("Starting"))
                 worker.post {
-                    val result = AndroidRuntimeValidation.evaluate(
-                        Build.SUPPORTED_ABIS.toList(),
-                        QEMU_EXECUTION_VERIFIED_ON_ANDROID,
-                        GUEST_BOOT_VERIFIED_ON_ANDROID,
-                    )
+                    val result = AndroidRuntimeValidation.evaluate(this)
                     if (!result.allowed) {
                         currentStatus = "Blocked: ${result.reason}"
                         publishStatus(currentStatus)
@@ -200,8 +196,5 @@ class ServerService : Service() {
         private const val CHANNEL_ID = "pocketos-vm"
         private const val NOTIFICATION_ID = 4101
 
-        // Enable only after execution and guest boot are demonstrated on ARM64 Android.
-        const val QEMU_EXECUTION_VERIFIED_ON_ANDROID = false
-        const val GUEST_BOOT_VERIFIED_ON_ANDROID = false
     }
 }

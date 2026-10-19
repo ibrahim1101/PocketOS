@@ -135,11 +135,7 @@ class MainActivity : Activity() {
     }
 
     private fun renderButtons() {
-        val gate = AndroidRuntimeValidation.evaluate(
-            Build.SUPPORTED_ABIS.toList(),
-            ServerService.QEMU_EXECUTION_VERIFIED_ON_ANDROID,
-            ServerService.GUEST_BOOT_VERIFIED_ON_ANDROID,
-        )
+        val gate = AndroidRuntimeValidation.evaluate(this)
         startButton.isEnabled = gate.allowed
         if (!gate.allowed) {
             vmStatus = "Blocked: ${gate.reason}"
@@ -187,18 +183,14 @@ class MainActivity : Activity() {
         val memoryInfo = android.app.ActivityManager.MemoryInfo()
         getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memoryInfo)
         val disk = java.io.File(filesDir, "guest/rootfs.ext4")
-        val gate = AndroidRuntimeValidation.evaluate(
-            Build.SUPPORTED_ABIS.toList(),
-            ServerService.QEMU_EXECUTION_VERIFIED_ON_ANDROID,
-            ServerService.GUEST_BOOT_VERIFIED_ON_ANDROID,
-        )
+        val gate = AndroidRuntimeValidation.evaluate(this)
         val details = listOf(
             "VM status: $vmStatus",
             "Supported ABIs: ${Build.SUPPORTED_ABIS.joinToString()}",
             "Android API: ${Build.VERSION.SDK_INT}",
             "Runtime gate: ${gate.reason}",
-            "QEMU execution evidence: ${ServerService.QEMU_EXECUTION_VERIFIED_ON_ANDROID}",
-            "Guest boot evidence: ${ServerService.GUEST_BOOT_VERIFIED_ON_ANDROID}",
+            "QEMU execution evidence: ${gate.qemuExecutionVerified}",
+            "Guest boot evidence: ${gate.guestBootVerified}",
             "Available host memory: ${memoryInfo.availMem / (1024 * 1024)} MiB",
             "Persistent guest disk: " + if (disk.isFile) "${disk.length() / (1024 * 1024)} MiB installed" else "not installed",
             "HTTP forwarding binds to 127.0.0.1 only",
