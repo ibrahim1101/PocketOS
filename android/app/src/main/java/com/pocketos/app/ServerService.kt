@@ -133,7 +133,15 @@ class ServerService : Service() {
         val settings = GuestRuntimeSettings.load(getSharedPreferences(SETTINGS_PREFS, MODE_PRIVATE))
         val config = QemuLaunchConfig(
             executable, assets.kernel, assets.initramfs, assets.rootDisk, qmpSocket,
-            memoryMiB = settings.memoryMiB, vcpus = settings.vcpus, hostHttpPort = settings.hostHttpPort,
+            memoryMiB = settings.memoryMiB,
+            vcpus = settings.vcpus,
+            hostHttpPort = settings.hostHttpPort,
+            hostBindAddress = if (settings.lanExposureEnabled) {
+                WifiLanAddress.activeIpv4(this)
+                    ?: error("LAN exposure requires an active Wi-Fi network with an IPv4 address")
+            } else {
+                "127.0.0.1"
+            },
         )
         return PreparedGuest(
             command = config.toCommand(),

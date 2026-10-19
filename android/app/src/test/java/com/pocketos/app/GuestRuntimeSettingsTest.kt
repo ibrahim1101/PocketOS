@@ -1,6 +1,7 @@
 package com.pocketos.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class GuestRuntimeSettingsTest {
@@ -9,7 +10,8 @@ class GuestRuntimeSettingsTest {
         assertEquals(1024, defaults.memoryMiB)
         assertEquals(2, defaults.vcpus)
         assertEquals(18080, defaults.hostHttpPort)
-        GuestRuntimeSettings(memoryMiB = 4096, vcpus = 4, hostHttpPort = 65535)
+        assertFalse(defaults.lanExposureEnabled)
+        GuestRuntimeSettings(memoryMiB = 4096, vcpus = 4, hostHttpPort = 65535, lanExposureEnabled = true)
     }
 
     @Test(expected = IllegalArgumentException::class)

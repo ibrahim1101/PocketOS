@@ -6,6 +6,7 @@ data class GuestRuntimeSettings(
     val memoryMiB: Int = DEFAULT_MEMORY_MIB,
     val vcpus: Int = DEFAULT_VCPUS,
     val hostHttpPort: Int = DEFAULT_HOST_HTTP_PORT,
+    val lanExposureEnabled: Boolean = false,
 ) {
     init {
         require(memoryMiB in MIN_MEMORY_MIB..MAX_MEMORY_MIB) { "Memory must be between 512 and 4096 MiB" }
@@ -15,7 +16,9 @@ data class GuestRuntimeSettings(
 
     fun save(preferences: SharedPreferences) {
         check(preferences.edit().putInt(KEY_MEMORY, memoryMiB).putInt(KEY_VCPUS, vcpus)
-            .putInt(KEY_HOST_PORT, hostHttpPort).commit()) { "Could not save guest settings" }
+            .putInt(KEY_HOST_PORT, hostHttpPort).putBoolean(KEY_LAN_EXPOSURE, lanExposureEnabled).commit()) {
+            "Could not save guest settings"
+        }
     }
 
     companion object {
@@ -29,11 +32,13 @@ data class GuestRuntimeSettings(
         private const val KEY_MEMORY = "memory_mib"
         private const val KEY_VCPUS = "vcpus"
         private const val KEY_HOST_PORT = "host_http_port"
+        private const val KEY_LAN_EXPOSURE = "lan_exposure_enabled"
 
         fun load(preferences: SharedPreferences) = GuestRuntimeSettings(
             memoryMiB = preferences.getInt(KEY_MEMORY, DEFAULT_MEMORY_MIB),
             vcpus = preferences.getInt(KEY_VCPUS, DEFAULT_VCPUS),
             hostHttpPort = preferences.getInt(KEY_HOST_PORT, DEFAULT_HOST_HTTP_PORT),
+            lanExposureEnabled = preferences.getBoolean(KEY_LAN_EXPOSURE, false),
         )
     }
 }

@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.text.InputType
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -162,7 +163,12 @@ class MainActivity : Activity() {
         }
         val memory = field("Guest memory MiB (512–4096)", current.memoryMiB)
         val cpus = field("Guest vCPUs (1–4)", current.vcpus)
-        val port = field("Loopback HTTP port (1024–65535)", current.hostHttpPort)
+        val port = field("Host HTTP port (1024–65535)", current.hostHttpPort)
+        val lanExposure = CheckBox(this).apply {
+            text = "Expose HTTP to devices on active Wi-Fi"
+            isChecked = current.lanExposureEnabled
+        }
+        form.addView(lanExposure)
         AlertDialog.Builder(this).setTitle("Guest settings").setView(form)
             .setPositiveButton("Save") { _, _ ->
                 runCatching {
@@ -170,14 +176,38 @@ class MainActivity : Activity() {
                         memoryMiB = memory.text.toString().toInt(),
                         vcpus = cpus.text.toString().toInt(),
                         hostHttpPort = port.text.toString().toInt(),
-                    ).save(getSharedPreferences(SETTINGS_PREFS, MODE_PRIVATE))
-                }.onSuccess {
-                    Toast.makeText(this, "Settings saved for the next guest start", Toast.LENGTH_SHORT).show()
+                        lanExposureEnabled = lanExposure.isChecked,
+                    )
+                }.onSuccess { settings ->
+                    if (settings.lanExposureEnabled) {
+                        AlertDialog.Builder(this)
+                            .setTitle("Expose HTTP on Wi-Fi?")
+                            .setMessage(
+                                "Other reachable devices on the active Wi-Fi network may connect to host port " +
+                                    settings.hostHttpPort + " and reach guest port 8080. Use guest services " +
+                                    "with their own authentication. PocketOS binds only to the active Wi-Fi IPv4 address."
+                            )
+                            .setPositiveButton("Enable LAN exposure") { _, _ -> saveSettings(settings) }
+                            .setNegativeButton("Cancel", null)
+                            .show()
+                    } else {
+                        saveSettings(settings)
+                    }
                 }.onFailure {
                     Toast.makeText(this, it.message ?: "Invalid settings", Toast.LENGTH_LONG).show()
                 }
             }
             .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun saveSettings(settings: GuestRuntimeSettings) {
+        runCatching { settings.save(getSharedPreferences(SETTINGS_PREFS, MODE_PRIVATE)) }
+            .onSuccess {
+                Toast.makeText(this, "Settings saved for the next guest start", Toast.LENGTH_SHORT).show()
+            }
+            .onFailure {
+                Toast.makeText(this, it.message ?: "Could not save settings", Toast.LENGTH_LONG).show()
+            }
     }
 
     private fun storageStatus(): GuestStorageStatus =
@@ -260,7 +290,7 @@ class MainActivity : Activity() {
             "Persistent guest disk capacity: " + storage.diskCapacityLabel,
             "Device free space: " + storage.availableDeviceLabel,
             "Guest filesystem free space: " + storage.guestFreeSpaceLabel,
-            "HTTP forwarding binds to 127.0.0.1 only",
+            "Network exposure: " + if (GuestRuntimeSettings.load(getSharedPreferences(SETTINGS_PREFS, MODE_PRIVATE)).lanExposureEnabled) "Wi-Fi LAN (active IPv4 only)" else "Loopback only",
         ).joinToString("\n")
         AlertDialog.Builder(this).setTitle("Diagnostics").setMessage(details).setPositiveButton("OK", null).show()
     }

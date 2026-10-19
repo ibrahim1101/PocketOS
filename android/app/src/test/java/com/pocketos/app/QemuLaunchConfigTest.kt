@@ -10,6 +10,7 @@ class QemuLaunchConfigTest {
     private fun config(
         hostPort: Int = 18080,
         guestPort: Int = 8080,
+        bindAddress: String = "127.0.0.1",
     ) = QemuLaunchConfig(
         executable = File("/data/app/lib/arm64/libqemu-system-aarch64.so"),
         kernel = File("/data/user/0/com.pocketos.app/files/vm/vmlinuz"),
@@ -18,6 +19,7 @@ class QemuLaunchConfigTest {
         qmpSocket = File("/data/user/0/com.pocketos.app/files/vm/run/qmp.sock"),
         hostHttpPort = hostPort,
         guestHttpPort = guestPort,
+        hostBindAddress = bindAddress,
     )
 
     @Test
@@ -41,6 +43,22 @@ class QemuLaunchConfigTest {
 
         assertEquals("user,id=net0,hostfwd=tcp:127.0.0.1:18081-:8081", network)
         assertFalse(network.contains("0.0.0.0"))
+    }
+
+    @Test
+    fun lanForwardUsesOnlyTheRequestedIpv4Address() {
+        val args = config(bindAddress = "192.168.1.23").toCommand()
+        val network = args[args.indexOf("-netdev") + 1]
+
+        assertEquals("user,id=net0,hostfwd=tcp:192.168.1.23:18080-:8080", network)
+        assertFalse(network.contains("0.0.0.0"))
+    }
+
+    @Test
+    fun rejectsInvalidHostBindAddresses() {
+        assertTrue(runCatching { config(bindAddress = "0.0.0.0") }.isFailure)
+        assertTrue(runCatching { config(bindAddress = "192.168.1.256") }.isFailure)
+        assertTrue(runCatching { config(bindAddress = "example.com") }.isFailure)
     }
 
     @Test
