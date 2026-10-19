@@ -156,6 +156,7 @@ class ServerService : Service() {
 
     private fun publishStatus(value: String) {
         sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_STATUS, value))
+        ServerWidget.refreshStatus(this, value)
     }
 
     private fun updateNotification(status: String) {
