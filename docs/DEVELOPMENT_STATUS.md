@@ -6,8 +6,8 @@ Updated: 2026-10-18
 
 - Active milestone: M2 — Android ARM64 QEMU build, guest asset installation, and service integration.
 - Active branch: `feat/m1-linux-boot`; PR #1 remains open.
-- Latest fully passing CI revision: `9bc8f46cd0575fa9aa3ce83ac9885c808a4f078d` (run #138).
-- On revision `b1a476dd855fb31460953faa0b577d9e8a0aced4`, CI run #141 passed the Android build and x86_64 instrumentation plus the Alpine ARM64 guest boot, shell, persistence, and localhost HTTP checks. Its optional ARM64 Android runtime job could not start because the SDK manager on `ubuntu-24.04-arm` has no `emulator` package.
+- Latest fully passing CI revision: `59a4734b42cf65c52335a5159d84d5812029c43d` (run #142).
+- CI run #142 passed the Android ARM64 QEMU cross-build and APK audit, Android JVM unit tests and x86_64 bridge instrumentation, and the Alpine ARM64 boot, shell, persistence, and localhost HTTP checks. The ARM64 QEMU execution test is skipped on x86_64 because it requires an ARM64 app install. Run #141 separately confirmed that `ubuntu-24.04-arm` cannot install Google's Android emulator: `sdkmanager` reported `Failed to find package 'emulator'`, so the unsupported runner job was removed.
 - The APK contains QEMU 11.1.2 plus Alpine's kernel, matching initramfs, compressed ext4 seed disk, and SHA-256 manifest.
 - `GuestAssetInstaller` verifies packaged hashes and ext4 format, stages versioned boot assets, atomically expands the seed disk to app-private storage, preserves it across repeat installs, and has an app-context factory. Android instrumentation installs the real APK assets, checks the 256 MiB ext4 disk, and verifies repeat-install preservation.
 - `GuestDiskLease` obtains an exclusive OS file lock beside the guest disk. Unit and Android instrumentation tests reject a concurrent writer and verify the lease can be acquired after release.
