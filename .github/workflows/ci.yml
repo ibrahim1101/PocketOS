@@ -135,7 +135,7 @@ jobs:
           bash scripts/fetch-android-qemu-source.sh "$RUNNER_TEMP/qemu-11.1.2"
           test -x "$RUNNER_TEMP/qemu-11.1.2/configure"
       - name: Check Python guest probe syntax
-        run: python3 -m py_compile scripts/check-guest-shell.py scripts/check-guest-persistence.py scripts/check-guest-http.py scripts/check-guest-firstboot.py
+        run: python3 -m py_compile scripts/check-guest-shell.py scripts/check-guest-persistence.py scripts/check-guest-http.py scripts/check-guest-firstboot.py scripts/check-guest-python-http.py
       - name: Build an ARM64 Alpine disk
         run: SIZE_MB=512 bash scripts/build-alpine-rootfs.sh "$RUNNER_TEMP/alpine-aarch64.ext4"
       - name: Verify guest root account is locked
@@ -179,3 +179,10 @@ jobs:
           --initramfs "$RUNNER_TEMP/initramfs-virt"
           --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
           --timeout 120
+      - name: Install Python and serve HTTP from the guest
+        run: >-
+          python3 scripts/check-guest-python-http.py
+          --kernel "$RUNNER_TEMP/vmlinuz-virt"
+          --initramfs "$RUNNER_TEMP/initramfs-virt"
+          --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
+          --timeout 240

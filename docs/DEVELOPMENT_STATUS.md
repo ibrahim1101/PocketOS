@@ -6,7 +6,7 @@ Updated: 2026-10-19
 
 - Active milestones: M6 — persistent storage management and M7 — localhost/LAN networking.
 - Active branch: feat/m1-linux-boot; PR #1 remains open.
-- Latest fully passing feature validation: run #161. Storage reporting/export and Wi-Fi LAN additions await the current CI run.
+- Latest fully passing feature validation: run #161. Android unit tests and Alpine integration tests passed in run #169; the overall workflow is still completing its final Android job.
 - The APK packages QEMU 11.1.2, Alpine's matching kernel and initramfs, a compressed ext4 seed disk, and a SHA-256 manifest. CI verifies the root password is locked in the generated seed image.
 - The app installs and verifies guest assets in private storage. Unit and Android instrumentation tests cover disk integrity, repeat install, exclusive disk leasing, VM lifecycle, readiness, session policy, and runtime-gate decisions.
 - Host CI boots Alpine under QEMU, provisions a non-root pocketos account through hidden serial password prompts, verifies login after restart, runs Linux commands, checks ext4 persistence, and tests localhost HTTP forwarding.
@@ -18,7 +18,7 @@ Updated: 2026-10-19
 - Foreground service owns GuestSessionController, QEMU process supervision, serial readiness, the 60-minute deadline, event-driven 20% battery cutoff, QMP shutdown request, bounded force-stop, disk lease, notifications, and shutdown status. Wi-Fi changes do not stop the guest.
 - Dashboard start/stop controls, status refresh, serial terminal, guest RAM/vCPU/HTTP port settings, opt-in Wi-Fi LAN exposure, a persistent storage view, and runtime diagnostics.
 - Persistent storage screen reports raw guest image capacity, Android device free space, and ext4 guest filesystem free/used space. Guest filesystem metrics are read only while the exclusive disk lease is available; they are shown as unavailable while the VM is active.
-- User-selected ext4 disk export acquires the exclusive guest disk lease before opening the destination and copies the image byte for byte; export is blocked while a VM owns the disk.
+- User-selected ext4 disk export acquires the exclusive guest disk lease before opening the destination and copies the image byte for byte; Android unit tests verify it is blocked while a VM owns the disk.
 - Home-screen widget start/stop actions and live service status.
 - Terminal password prompts use masked input; submitted input is cleared and terminal contents remain in memory only.
 - QemuLaunchConfig uses ARM virt TCG, a persistent VirtIO disk, serial console, and QMP. HTTP forwarding binds to 127.0.0.1 by default; optional Wi-Fi LAN forwarding requires an explicit confirmation and binds to the active Wi-Fi IPv4 address.
