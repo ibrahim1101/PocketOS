@@ -1,6 +1,7 @@
 package com.pocketos.app
 
 import java.io.File
+import java.io.RandomAccessFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -25,22 +26,58 @@ class GuestStorageStatusTest {
 
         assertEquals("Not initialized", status.diskCapacityLabel)
         assertTrue(status.lowDeviceSpace)
+        assertEquals("Unavailable while disk is active or unreadable", status.guestFreeSpaceLabel)
     }
 
     @Test
-    fun readUsesExistingImageLengthAndDoesNotCreateFiles() {
+    fun readsExt4FreeSpaceOnlyWhileItCanAcquireTheExclusiveDiskLease() {
         val directory = createTempDir()
         try {
-            val disk = File(directory, "rootfs.ext4")
-            disk.writeBytes(ByteArray(4096))
-
+            val disk = ext4Image(directory)
             val status = GuestStorageStatus.read(disk, directory)
 
             assertEquals(4096L, status.diskCapacityBytes)
-            assertTrue(status.availableDeviceBytes >= 0)
-            assertTrue(disk.exists())
+            assertEquals(1024L, status.guestFileSystem?.freeBytes)
+            assertEquals("1.0 KiB", status.guestFreeSpaceLabel)
+            assertEquals("3.0 KiB", status.guestFileSystem?.usedLabel)
         } finally {
             directory.deleteRecursively()
         }
+    }
+
+    @Test
+    fun leavesGuestFreeSpaceUnknownWhenTheDiskIsLeased() {
+        val directory = createTempDir()
+        try {
+            val disk = ext4Image(directory)
+            val lease = GuestDiskLease.acquire(disk)
+            try {
+                val status = GuestStorageStatus.read(disk, directory)
+                assertEquals("Unavailable while disk is active or unreadable", status.guestFreeSpaceLabel)
+            } finally {
+                lease.close()
+            }
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    private fun ext4Image(directory: File): File {
+        val disk = File(directory, "rootfs.ext4")
+        RandomAccessFile(disk, "rw").use { image ->
+            image.setLength(4096)
+            writeUInt32LE(image, 1024 + 4, 4)
+            writeUInt32LE(image, 1024 + 12, 1)
+            writeUInt32LE(image, 1024 + 24, 0)
+            image.seek(1024 + 56)
+            image.write(0x53)
+            image.write(0xEF)
+        }
+        return disk
+    }
+
+    private fun writeUInt32LE(file: RandomAccessFile, offset: Long, value: Long) {
+        file.seek(offset)
+        repeat(4) { index -> file.write(((value ushr (index * 8)) and 0xFF).toInt()) }
     }
 }

@@ -188,6 +188,7 @@ class MainActivity : Activity() {
         val details = buildList {
             add("Persistent guest disk capacity: " + storage.diskCapacityLabel)
             add("Device free space: " + storage.availableDeviceLabel)
+            add("Guest filesystem free space: " + storage.guestFreeSpaceLabel)
             if (storage.lowDeviceSpace) {
                 add("Low device storage may prevent guest writes or future asset installation.")
             }
@@ -258,6 +259,7 @@ class MainActivity : Activity() {
             "Available host memory: ${memoryInfo.availMem / (1024 * 1024)} MiB",
             "Persistent guest disk capacity: " + storage.diskCapacityLabel,
             "Device free space: " + storage.availableDeviceLabel,
+            "Guest filesystem free space: " + storage.guestFreeSpaceLabel,
             "HTTP forwarding binds to 127.0.0.1 only",
         ).joinToString("\n")
         AlertDialog.Builder(this).setTitle("Diagnostics").setMessage(details).setPositiveButton("OK", null).show()
