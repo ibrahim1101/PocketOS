@@ -111,13 +111,27 @@ class GuestSessionControllerTest {
         assertEquals(1, rig.launcher.launchCount)
     }
 
+    @Test
+    fun forceStopsOnlyAfterGracefulShutdownTimesOut() {
+        val rig = Rig(gracefulShutdownCompletes = false)
+        assertTrue(rig.controller.start { rig.preparedGuest() })
+        rig.launcher.emitSerial("pocketos login: ")
+
+        assertTrue(rig.controller.stopByUser())
+
+        assertEquals(1, rig.gracefulShutdownRequests)
+        assertEquals(1, rig.launcher.process?.forceStopCount)
+        assertEquals(VmState.STOPPED, rig.controller.state)
+        assertTrue(rig.lease.closed)
+    }
+
     private fun awaitState(controller: GuestSessionController, expected: VmState) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
         while (controller.state != expected && System.nanoTime() < deadline) Thread.sleep(5)
         assertEquals(expected, controller.state)
     }
 
-    private class Rig(initialBattery: Int = 80) {
+    private class Rig(initialBattery: Int = 80, private val gracefulShutdownCompletes: Boolean = true) {
         val lifecycle = VmLifecycle()
         val store = FakeStore()
         val clock = FakeClock(1_000)
@@ -133,6 +147,8 @@ class GuestSessionControllerTest {
             processLauncher = launcher,
             scheduler = scheduler,
             batteryPercent = { battery },
+            gracefulShutdownTimeoutMs = 1,
+            forceStopTimeoutMs = 1,
         )
 
         fun preparedGuest() = PreparedGuest(
@@ -141,7 +157,7 @@ class GuestSessionControllerTest {
             diskLease = lease,
             requestGracefulShutdown = {
                 gracefulShutdownRequests += 1
-                launcher.process?.exit()
+                if (gracefulShutdownCompletes) launcher.process?.exit()
             },
         )
     }
@@ -184,7 +200,9 @@ class GuestSessionControllerTest {
             }
         }
 
+        var forceStopCount = 0
         override fun forceStop(timeout: Long, unit: TimeUnit): Boolean {
+            forceStopCount += 1
             exit()
             return true
         }

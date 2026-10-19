@@ -79,6 +79,7 @@ class GuestSessionController(
     fun start(prepare: () -> PreparedGuest): Boolean = synchronized(lock) {
         if (!lifecycle.canStart() || !coordinator.canStart(readBatteryPercent())) return false
         if (!coordinator.beginPreparation()) return false
+        lastStopReason = null
 
         try {
             val prepared = prepare()
