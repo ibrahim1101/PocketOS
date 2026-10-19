@@ -267,10 +267,11 @@ class MainActivity : Activity() {
             .setMessage("Enter a larger raw image size in MiB. ext4 expands during the next guest boot.")
             .setView(input).setPositiveButton("Grow") { _, _ ->
                 val requested = input.text.toString().toLongOrNull()
-                if (requested == null || requested <= currentMiB) {
-                    Toast.makeText(this, "Choose a size larger than ${currentMiB} MiB", Toast.LENGTH_LONG).show()
+                    ?.takeIf { it > currentMiB && it <= Long.MAX_VALUE / (1024L * 1024L) }
+                if (requested == null) {
+                    Toast.makeText(this, "Choose a larger size that fits in MiB", Toast.LENGTH_LONG).show()
                 } else runDiskOperation("Growing guest disk…") {
-                    val bytes = Math.multiplyExact(requested, 1024L * 1024L)
+                    val bytes = requested * 1024L * 1024L
                     GuestDiskManager.grow(disk, bytes)
                     "Guest disk grew to ${GuestStorageStatus.formatBytes(bytes)}; ext4 expands on next start"
                 }

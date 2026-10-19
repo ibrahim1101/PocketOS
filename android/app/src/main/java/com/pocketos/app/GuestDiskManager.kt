@@ -25,7 +25,7 @@ object GuestDiskManager {
         val parent = target.parentFile ?: error("Guest disk directory is unavailable")
         require(target.isFile && ext4Capacity(target) != null) { "Current guest disk is missing or invalid" }
         GuestDiskLease.acquire(target).use {
-            val staging = File(parent, ".\${target.name}.\${UUID.randomUUID()}.restore")
+            val staging = File(parent, ".${target.name}.${UUID.randomUUID()}.restore")
             try {
                 val limit = (parent.usableSpace - RESERVE).coerceAtLeast(0L)
                 require(limit > 0) { "Not enough free device storage for a safe disk restore" }
@@ -66,7 +66,7 @@ object GuestDiskManager {
             require(newCapacityBytes <= parent.usableSpace - RESERVE) {
                 "Not enough free device storage for a safe disk growth operation"
             }
-            val staging = File(parent, ".\${target.name}.\${UUID.randomUUID()}.grow")
+            val staging = File(parent, ".${target.name}.${UUID.randomUUID()}.grow")
             try {
                 FileInputStream(target).use { input ->
                     FileOutputStream(staging).use { output -> input.copyTo(output); output.fd.sync() }

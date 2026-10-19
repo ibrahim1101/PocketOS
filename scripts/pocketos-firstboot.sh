@@ -4,7 +4,7 @@ set -eu
 
 # Android can grow the raw image; expand mounted ext4 before login.
 if command -v resize2fs >/dev/null 2>&1; then
-  resize2fs /dev/vda || printf 'PocketOS: ext4 auto-grow failed; disk remains available.\\n'
+  resize2fs /dev/vda || printf 'PocketOS: ext4 auto-grow failed; disk remains available.\n'
 fi
 
 marker=/var/lib/pocketos/user-setup-complete
