@@ -6,7 +6,7 @@ Updated: 2026-10-19
 
 - Active milestone: M2 — Android ARM64 QEMU build, guest asset installation, and service integration.
 - Active branch: `feat/m1-linux-boot`; PR #1 remains open.
-- Latest fully passing CI revision: `5ce160c973224b4a0b55b915092a2c38e02b2fa9` (run #144).
+- Latest fully passing CI revision: `e076943ad5df0262e6efadc12807ef6681a268d8` (run #152).
 - CI run #144 passed the Android ARM64 QEMU cross-build and APK audit, Android JVM unit tests and x86_64 bridge instrumentation, both generated-image root-lock checks, and the Alpine ARM64 boot, shell, persistence, and localhost HTTP checks. The ARM64 QEMU execution test is skipped on x86_64 because it requires an ARM64 app install. Run #141 separately confirmed that `ubuntu-24.04-arm` cannot install Google's Android emulator: `sdkmanager` reported `Failed to find package 'emulator'`, so the unsupported runner job was removed.
 - The APK contains QEMU 11.1.2 plus Alpine's kernel, matching initramfs, compressed ext4 seed disk, and SHA-256 manifest. The root password is explicitly locked in the generated seed image, and `scripts/check-guest-root-lock.sh` verifies both generated ext4 images in CI.
 - `GuestAssetInstaller` verifies packaged hashes and ext4 format, stages versioned boot assets, atomically expands the seed disk to app-private storage, preserves it across repeat installs, and has an app-context factory. Android instrumentation installs the real APK assets, checks the 256 MiB ext4 disk, and verifies repeat-install preservation.
@@ -24,12 +24,12 @@ Updated: 2026-10-19
 - QemuLaunchConfig describes ARM virt TCG, kernel/initramfs, persistent VirtIO block, serial stdio, QMP, and loopback-only HTTP forwarding. It has not been run with Android QEMU.
 - CI cross-builds pinned QEMU 11.1.2 for arm64-v8a with checksum-pinned dependencies and audits packaged ELF architecture, linker, and runtime dependencies.
 - CI boots Alpine under host QEMU, runs Linux shell commands, verifies ext4 persistence across restart, and tests localhost HTTP forwarding.
-- Installer, readiness, session protection, and lifecycle coordination are standalone tested components; Android service-level startup and policy enforcement remain unimplemented.
+- Installer, readiness, session protection, and lifecycle coordination are standalone tested components. A new `GuestSessionController` now composes preparation, the native process boundary, serial readiness, session deadline, battery cutoff, graceful shutdown, bounded force-stop, and disk-lease cleanup; dedicated controller lifecycle tests are added and CI validation is pending.
 - The activity and widget do not start or stop a VM.
 
 ## Outstanding gaps
 
-- Wire the tested components, process supervisor, serial terminal, QMP shutdown, bounded recovery, timer, and battery monitor into the foreground service.
+- Wire the tested `GuestSessionController` into the Android foreground service and connect QMP shutdown, Android notifications, and event-driven battery monitoring. Startup remains fail-closed until ARM64 Android runtime validation.
 - Execute ARM64 QEMU on an ARM64 Android device or emulator and boot Alpine to the login prompt.
 - Add dashboard controls, serial terminal input/output, notifications, widget actions, diagnostics, and shutdown reason reporting.
 - Complete first-run password setup over the Android serial terminal, verify login, package installation, storage controls, and Android-side localhost access. The seed root account is locked; the non-root account is created only after interactive first boot.

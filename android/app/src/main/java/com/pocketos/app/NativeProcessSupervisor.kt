@@ -8,16 +8,16 @@ import java.util.concurrent.TimeUnit
  * Starts a native guest engine as a child process of the dedicated VM service.
  * QEMU serial uses stdin/stdout; stderr stays separate for diagnostics.
  */
-class NativeProcessSupervisor {
+class NativeProcessSupervisor : GuestProcessLauncher {
     @Volatile
     private var activeProcess: Process? = null
 
     @Synchronized
-    fun start(
+    override fun start(
         command: List<String>,
-        workingDirectory: File? = null,
-        onSerialOutput: (ByteArray) -> Unit = {},
-        onDiagnosticOutput: (ByteArray) -> Unit = {},
+        workingDirectory: File?,
+        onSerialOutput: (ByteArray) -> Unit,
+        onDiagnosticOutput: (ByteArray) -> Unit,
     ): NativeProcessHandle {
         require(command.isNotEmpty()) { "Native process command cannot be empty" }
         check(activeProcess?.isAlive != true) { "A native VM process is already running" }
@@ -52,27 +52,27 @@ class NativeProcessSupervisor {
     }
 }
 
-class NativeProcessHandle internal constructor(private val process: Process) {
-    val isAlive: Boolean
+class NativeProcessHandle internal constructor(private val process: Process) : GuestProcess {
+    override val isAlive: Boolean
         get() = process.isAlive
 
     val exitCode: Int
         get() = process.exitValue()
 
     @Synchronized
-    fun writeSerial(bytes: ByteArray) {
+    override fun writeSerial(bytes: ByteArray) {
         check(process.isAlive) { "Native VM process is not running" }
         process.outputStream.write(bytes)
         process.outputStream.flush()
     }
 
-    fun awaitExit(timeout: Long, unit: TimeUnit): Boolean {
+    override fun awaitExit(timeout: Long, unit: TimeUnit): Boolean {
         require(timeout >= 0) { "Timeout cannot be negative" }
         return process.waitFor(timeout, unit)
     }
 
     /** Last-resort process termination; callers should request QEMU shutdown first. */
-    fun forceStop(timeout: Long = 5, unit: TimeUnit = TimeUnit.SECONDS): Boolean {
+    override fun forceStop(timeout: Long, unit: TimeUnit): Boolean {
         if (process.isAlive) {
             process.destroyForcibly()
         }

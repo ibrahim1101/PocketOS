@@ -17,6 +17,12 @@ class GuestBootCoordinator(
     private val readinessProbe: GuestReadinessProbe,
     private val sessionProtection: SessionProtection,
 ) {
+    fun canStart(batteryPercent: Int): Boolean = sessionProtection.canStart(batteryPercent)
+
+    fun remainingSessionMs(): Long? = sessionProtection.remainingMs()
+
+    fun clearSession() = sessionProtection.clear()
+
     fun beginPreparation(): Boolean = lifecycle.transitionTo(VmState.PREPARING)
 
     fun onPreparationComplete(): Boolean = lifecycle.transitionTo(VmState.STARTING)
