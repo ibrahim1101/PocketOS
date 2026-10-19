@@ -18,6 +18,7 @@ Updated: 2026-10-19
 - Foreground service owns GuestSessionController, QEMU process supervision, serial readiness, the 60-minute deadline, event-driven 20% battery cutoff, QMP shutdown request, bounded force-stop, disk lease, notifications, and shutdown status. Wi-Fi changes do not stop the guest.
 - Dashboard start/stop controls, status refresh, serial terminal, settings for guest RAM, vCPU count, and loopback HTTP port, a persistent storage view, and runtime diagnostics.
 - Persistent storage screen reports raw guest image capacity separately from device free space, flags low device storage, and explains that device free space is not guest filesystem free space.
+- User-selected ext4 disk export acquires the exclusive guest disk lease before opening the destination and copies the image byte for byte; export is blocked while a VM owns the disk.
 - Home-screen widget start/stop actions and live service status.
 - Terminal password prompts use masked input; submitted input is cleared and terminal contents remain in memory only.
 - QemuLaunchConfig uses ARM virt TCG, a persistent VirtIO disk, serial console, QMP, and 127.0.0.1-only HTTP forwarding.
@@ -27,5 +28,5 @@ Updated: 2026-10-19
 
 - Run the ARM64 instrumentation suite on a physical ARM64 Android device. The current workspace has no adb/device connection, and CI only provides an x86_64 Android emulator.
 - After the runtime gate opens on that device, finish first-run account setup and login through the app terminal; verify package installation, guest filesystem usage telemetry, and Android-side localhost access.
-- Measure boot time, memory use, and battery impact on physical ARM64 hardware. LAN exposure, disk resizing/import/export/backup, and custom kernels remain later work.
+- Measure boot time, memory use, and battery impact on physical ARM64 hardware. LAN exposure, disk resizing/import, guest filesystem usage telemetry, and custom kernels remain later work.
 - Do not merge or release without explicit approval.

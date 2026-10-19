@@ -193,10 +193,54 @@ class MainActivity : Activity() {
             }
             add("The disk stays in private app storage across guest restarts.")
             add("Device free space is not the guest filesystem's free space.")
-            add("Disk resizing, backup, and export are not enabled yet.")
+            add("Export creates a byte-for-byte ext4 backup while the guest disk is stopped.")
+            add("Disk resizing and import are not enabled yet.")
         }.joinToString("\n")
         AlertDialog.Builder(this).setTitle("Storage").setMessage(details)
-            .setPositiveButton("OK", null).show()
+            .setPositiveButton("Export disk") { _, _ -> requestDiskExport() }
+            .setNegativeButton("Close", null).show()
+    }
+
+    private fun requestDiskExport() {
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/octet-stream"
+            putExtra(Intent.EXTRA_TITLE, "pocketos-rootfs.ext4")
+        }
+        startActivityForResult(intent, REQUEST_DISK_EXPORT)
+    }
+
+    @Deprecated("Use the Activity Result API when the app's activity dependencies are migrated.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_DISK_EXPORT || resultCode != RESULT_OK) return
+        val destination = data?.data ?: return
+        val disk = java.io.File(filesDir, "guest/rootfs.ext4")
+        Toast.makeText(this, "Exporting guest disk…", Toast.LENGTH_SHORT).show()
+        Thread {
+            runCatching {
+                GuestDiskExporter.export(disk) {
+                    contentResolver.openOutputStream(destination, "w")
+                        ?: error("Could not open the selected export destination")
+                }
+            }.onSuccess { bytes ->
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "Guest disk exported (" + GuestStorageStatus.formatBytes(bytes) + ")",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }.onFailure { error ->
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        error.message ?: "Guest disk export failed",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }.start()
     }
 
     private fun showDiagnostics() {
