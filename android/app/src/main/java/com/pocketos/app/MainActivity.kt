@@ -194,7 +194,7 @@ class MainActivity : Activity() {
             add("The disk stays in private app storage across guest restarts.")
             add("Device free space is not the guest filesystem's free space.")
             add("Disk resizing, backup, and export are not enabled yet.")
-        }.joinToString("\\n")
+        }.joinToString("\n")
         AlertDialog.Builder(this).setTitle("Storage").setMessage(details)
             .setPositiveButton("OK", null).show()
     }
