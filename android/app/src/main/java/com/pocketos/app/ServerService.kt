@@ -21,6 +21,12 @@ class ServerService : Service() {
     private lateinit var worker: Handler
     private lateinit var batteryMonitor: BatteryLevelMonitor
     private var currentStatus = "Stopped"
+    private val terminalInputReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: Intent?) {
+            val input = intent?.getStringExtra(EXTRA_TERMINAL_INPUT) ?: return
+            worker.post { controller.writeSerial((input + "\n").toByteArray(Charsets.UTF_8)) }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -43,13 +49,25 @@ class ServerService : Service() {
             },
             batteryPercent = ::currentBatteryPercent,
             onDiagnosticOutput = { bytes -> Log.d(TAG, "QEMU diagnostic bytes=${bytes.size}") },
+            onSerialOutput = { bytes ->
+                sendBroadcast(
+                    Intent(ACTION_TERMINAL_OUTPUT).setPackage(packageName)
+                        .putExtra(EXTRA_TERMINAL_OUTPUT, String(bytes, Charsets.UTF_8))
+                )
+            },
             onStateChanged = { state ->
                 currentStatus = state.name.lowercase().replaceFirstChar { it.uppercase() }
                 publishStatus(currentStatus)
                 updateNotification(currentStatus)
             },
         )
-        batteryMonitor = BatteryLevelMonitor(this) { controller.onBatteryChanged(it) }
+        val inputFilter = android.content.IntentFilter(ACTION_TERMINAL_INPUT)
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(terminalInputReceiver, inputFilter, RECEIVER_NOT_EXPORTED)
+        else {
+            @Suppress("DEPRECATION")
+            registerReceiver(terminalInputReceiver, inputFilter)
+        }
+        batteryMonitor = BatteryLevelMonitor(this) { percent -> worker.post { controller.onBatteryChanged(percent) } }
         batteryMonitor.start()
         publishStatus(currentStatus)
     }
@@ -96,6 +114,7 @@ class ServerService : Service() {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(terminalInputReceiver)
         batteryMonitor.close()
         if (::workerThread.isInitialized) workerThread.quitSafely()
         super.onDestroy()
@@ -158,7 +177,11 @@ class ServerService : Service() {
         const val ACTION_START = "com.pocketos.app.START_VM"
         const val ACTION_STOP = "com.pocketos.app.STOP_VM"
         const val ACTION_STATUS = "com.pocketos.app.VM_STATUS"
+        const val ACTION_TERMINAL_INPUT = "com.pocketos.app.TERMINAL_INPUT"
+        const val ACTION_TERMINAL_OUTPUT = "com.pocketos.app.TERMINAL_OUTPUT"
         const val EXTRA_STATUS = "status"
+        const val EXTRA_TERMINAL_INPUT = "terminal_input"
+        const val EXTRA_TERMINAL_OUTPUT = "terminal_output"
         private const val TAG = "PocketOS"
         private const val CHANNEL_ID = "pocketos-vm"
         private const val NOTIFICATION_ID = 4101

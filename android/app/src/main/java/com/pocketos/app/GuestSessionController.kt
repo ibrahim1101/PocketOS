@@ -56,6 +56,7 @@ class GuestSessionController(
     private val forceStopTimeoutMs: Long = DEFAULT_FORCE_STOP_TIMEOUT_MS,
     private val onDiagnosticOutput: (ByteArray) -> Unit = {},
     private val onStateChanged: (VmState) -> Unit = {},
+    private val onSerialOutput: (ByteArray) -> Unit = {},
 ) {
     private val lock = Any()
     private var process: GuestProcess? = null
@@ -184,6 +185,7 @@ class GuestSessionController(
 
     private fun receiveSerialOutput(bytes: ByteArray) {
         if (bytes.isEmpty()) return
+        runCatching { onSerialOutput(bytes.copyOf()) }
         synchronized(lock) {
             if (launching && process == null) {
                 pendingSerial += bytes.copyOf()
