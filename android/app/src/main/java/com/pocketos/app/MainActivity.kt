@@ -244,6 +244,10 @@ class MainActivity : Activity() {
     @Deprecated("Use the Activity Result API when the app's activity dependencies are migrated.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_DIAGNOSTICS_EXPORT) {
+            if (resultCode == RESULT_OK) data?.data?.let(::exportDiagnostics)
+            return
+        }
         if (requestCode != REQUEST_DISK_EXPORT || resultCode != RESULT_OK) return
         val destination = data?.data ?: return
         val disk = java.io.File(filesDir, "guest/rootfs.ext4")
@@ -274,25 +278,66 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun showDiagnostics() {
+    private fun diagnosticsReport(): String {
         val memoryInfo = android.app.ActivityManager.MemoryInfo()
         getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memoryInfo)
         val storage = storageStatus()
         val gate = AndroidRuntimeValidation.evaluate(this)
-        val details = listOf(
-            "VM status: $vmStatus",
-            "Supported ABIs: ${Build.SUPPORTED_ABIS.joinToString()}",
-            "Android API: ${Build.VERSION.SDK_INT}",
-            "Runtime gate: ${gate.reason}",
-            "QEMU execution evidence: ${gate.qemuExecutionVerified}",
-            "Guest boot evidence: ${gate.guestBootVerified}",
-            "Available host memory: ${memoryInfo.availMem / (1024 * 1024)} MiB",
-            "Persistent guest disk capacity: " + storage.diskCapacityLabel,
-            "Device free space: " + storage.availableDeviceLabel,
-            "Guest filesystem free space: " + storage.guestFreeSpaceLabel,
-            "Network exposure: " + if (GuestRuntimeSettings.load(getSharedPreferences(SETTINGS_PREFS, MODE_PRIVATE)).lanExposureEnabled) "Wi-Fi LAN (active IPv4 only)" else "Loopback only",
-        ).joinToString("\n")
-        AlertDialog.Builder(this).setTitle("Diagnostics").setMessage(details).setPositiveButton("OK", null).show()
+        val settings = GuestRuntimeSettings.load(getSharedPreferences(SETTINGS_PREFS, MODE_PRIVATE))
+        return DiagnosticsReport.format(
+            vmStatus = vmStatus,
+            supportedAbis = Build.SUPPORTED_ABIS.toList(),
+            androidApi = Build.VERSION.SDK_INT,
+            runtimeGateReason = gate.reason,
+            qemuExecutionVerified = gate.qemuExecutionVerified,
+            guestBootVerified = gate.guestBootVerified,
+            availableHostMemoryMiB = memoryInfo.availMem / (1024 * 1024),
+            diskCapacity = storage.diskCapacityLabel,
+            deviceFreeSpace = storage.availableDeviceLabel,
+            guestFreeSpace = storage.guestFreeSpaceLabel,
+            lanExposureEnabled = settings.lanExposureEnabled,
+        )
+    }
+
+    private fun showDiagnostics() {
+        AlertDialog.Builder(this)
+            .setTitle("Diagnostics")
+            .setMessage(diagnosticsReport())
+            .setPositiveButton("Export report") { _, _ -> requestDiagnosticsExport() }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun requestDiagnosticsExport() {
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TITLE, "pocketos-diagnostics.txt")
+        }
+        startActivityForResult(intent, REQUEST_DIAGNOSTICS_EXPORT)
+    }
+
+    private fun exportDiagnostics(destination: android.net.Uri) {
+        val report = diagnosticsReport()
+        Thread {
+            runCatching {
+                val output = contentResolver.openOutputStream(destination, "w")
+                    ?: error("Could not open the selected diagnostics destination")
+                output.bufferedWriter(Charsets.UTF_8).use { it.write(report) }
+            }.onSuccess {
+                runOnUiThread {
+                    Toast.makeText(this, "Diagnostics exported", Toast.LENGTH_SHORT).show()
+                }
+            }.onFailure { error ->
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        error.message ?: "Diagnostics export failed",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }.start()
     }
 
     private fun appendTerminal(text: String) {
@@ -331,6 +376,7 @@ class MainActivity : Activity() {
     companion object {
         private const val REQUEST_NOTIFICATIONS = 42
         private const val REQUEST_DISK_EXPORT = 43
+        private const val REQUEST_DIAGNOSTICS_EXPORT = 44
         private const val SETTINGS_PREFS = "guest_settings"
         private const val MAX_TERMINAL_CHARS = 32_768
     }
