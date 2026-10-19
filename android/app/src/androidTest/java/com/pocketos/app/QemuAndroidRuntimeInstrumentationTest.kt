@@ -1,6 +1,8 @@
 package com.pocketos.app
 
 import android.content.Context
+import android.os.Bundle
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
@@ -54,8 +56,9 @@ class QemuAndroidRuntimeInstrumentationTest {
         AndroidRuntimeValidation.recordQemuExecutionVerified(context)
     }
 
-    @Test
+    @Test(timeout = MAX_GUEST_TEST_DURATION_MS)
     fun bootsFreshAlpineSetsPasswordLogsInPersistsAndQuitsThroughQmp() {
+        reportStage("Checking ARM64 runtime and available app storage")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         assumeArm64(context)
         assumeTrue(
@@ -63,6 +66,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             context.filesDir.usableSpace >= MIN_TEST_STORAGE_BYTES,
         )
 
+        reportStage("Installing and verifying packaged guest assets")
         val installed = GuestAssetInstaller.forContext(context).install()
         assertTrue("App-private persistent disk was not initialized as ext4", isExt4(installed.rootDisk))
         val validationId = UUID.randomUUID().toString().replace("-", "")
@@ -71,71 +75,53 @@ class QemuAndroidRuntimeInstrumentationTest {
         val password = UUID.randomUUID().toString().replace("-", "").take(18)
 
         try {
+            reportStage("Creating an isolated copy of the Alpine seed disk")
             val firstLease = GuestDiskLease.acquire(disk)
             var firstProcess: NativeProcessHandle? = null
             try {
-                val console = SerialCapture()
-                firstProcess = startGuest(context, installed, disk, qmpSocket, console)
-                assertTrue(
-                    "Guest did not reach the first-run password prompt",
-                    console.await("New password:", firstProcess, GUEST_BOOT_TIMEOUT_MS),
-                )
+                val console = SerialCapture(password)
+                val stderr = BoundedDiagnosticCapture()
+                firstProcess = startGuest(context, installed, disk, qmpSocket, console, stderr)
+                awaitStage("Waiting for the first-run password prompt", "New password:", console, firstProcess, stderr, GUEST_BOOT_TIMEOUT_MS)
                 assertTrue("Guest readiness probe did not recognize first-run readiness", console.probe.isReady)
+                reportStage("Submitting an ephemeral password to the isolated guest disk")
                 firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
-                assertTrue(
-                    "Guest did not reach password confirmation",
-                    console.await("Retype password:", firstProcess, PROMPT_TIMEOUT_MS),
-                )
+                awaitStage("Waiting for password confirmation", "Retype password:", console, firstProcess, stderr, PROMPT_TIMEOUT_MS)
                 firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
-                assertTrue(
-                    "First-run setup did not finish",
-                    console.await("POCKETOS_FIRST_BOOT_COMPLETE", firstProcess, PROMPT_TIMEOUT_MS),
-                )
-                assertTrue(
-                    "Non-root login prompt did not appear",
-                    console.await("pocketos login:", firstProcess, PROMPT_TIMEOUT_MS),
-                )
+                awaitStage("Waiting for first-run setup completion", "POCKETOS_FIRST_BOOT_COMPLETE", console, firstProcess, stderr, PROMPT_TIMEOUT_MS)
+                awaitStage("Waiting for the non-root login prompt", "pocketos login:", console, firstProcess, stderr, PROMPT_TIMEOUT_MS)
 
+                reportStage("Logging in as pocketos and checking account and disk marker")
                 firstProcess.writeSerial("pocketos\n".toByteArray(Charsets.UTF_8))
-                assertTrue(
-                    "Guest did not request the new account password",
-                    console.await("Password:", firstProcess, PROMPT_TIMEOUT_MS),
-                )
+                awaitStage("Waiting for the account password prompt", "Password:", console, firstProcess, stderr, PROMPT_TIMEOUT_MS)
                 firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
-                assertTrue("Guest did not enter the account shell", console.await("$ ", firstProcess, PROMPT_TIMEOUT_MS))
-                verifyGuestAccountAndPersistentMarker(console, firstProcess)
-                gracefulQmpShutdown(firstProcess, qmpSocket)
+                awaitStage("Waiting for the account shell", "$ ", console, firstProcess, stderr, PROMPT_TIMEOUT_MS)
+                verifyGuestAccountAndPersistentMarker(console, firstProcess, stderr)
+                gracefulQmpShutdown(firstProcess, qmpSocket, console, stderr)
             } finally {
-                if (firstProcess?.isAlive == true) firstProcess.forceStop()
+                stopIfStillRunning("first boot", firstProcess)
                 firstLease.close()
                 qmpSocket.delete()
             }
 
+            reportStage("Rebooting the isolated disk to verify persisted credentials and marker")
             val secondLease = GuestDiskLease.acquire(disk)
             var secondProcess: NativeProcessHandle? = null
             try {
-                val console = SerialCapture()
-                secondProcess = startGuest(context, installed, disk, qmpSocket, console)
-                assertTrue(
-                    "Guest did not return to login after restart",
-                    console.await("pocketos login:", secondProcess, GUEST_BOOT_TIMEOUT_MS),
-                )
+                val console = SerialCapture(password)
+                val stderr = BoundedDiagnosticCapture()
+                secondProcess = startGuest(context, installed, disk, qmpSocket, console, stderr)
+                awaitStage("Waiting for login after restart", "pocketos login:", console, secondProcess, stderr, GUEST_BOOT_TIMEOUT_MS)
                 assertTrue("Readiness probe did not recognize login readiness", console.probe.isReady)
 
                 secondProcess.writeSerial("pocketos\n".toByteArray(Charsets.UTF_8))
-                assertTrue(
-                    "Guest did not request the persisted account password",
-                    console.await("Password:", secondProcess, PROMPT_TIMEOUT_MS),
-                )
+                awaitStage("Waiting for the persisted account password prompt", "Password:", console, secondProcess, stderr, PROMPT_TIMEOUT_MS)
                 secondProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
-                assertTrue(
-                    "Guest did not enter the persisted account shell",
-                    console.await("$ ", secondProcess, PROMPT_TIMEOUT_MS),
-                )
-                verifyGuestAccountAndPersistentMarker(console, secondProcess)
-                gracefulQmpShutdown(secondProcess, qmpSocket)
+                awaitStage("Waiting for the persisted account shell", "$ ", console, secondProcess, stderr, PROMPT_TIMEOUT_MS)
+                verifyGuestAccountAndPersistentMarker(console, secondProcess, stderr)
+                gracefulQmpShutdown(secondProcess, qmpSocket, console, stderr)
             } finally {
-                if (secondProcess?.isAlive == true) secondProcess.forceStop()
+                stopIfStillRunning("second boot", secondProcess)
                 secondLease.close()
                 qmpSocket.delete()
             }
@@ -147,21 +133,33 @@ class QemuAndroidRuntimeInstrumentationTest {
         AndroidRuntimeValidation.recordGuestBootVerified(context)
     }
 
-    private fun verifyGuestAccountAndPersistentMarker(console: SerialCapture, process: NativeProcessHandle) {
+    private fun verifyGuestAccountAndPersistentMarker(
+        console: SerialCapture,
+        process: NativeProcessHandle,
+        stderr: BoundedDiagnosticCapture,
+    ) {
         val command =
             "test \"$(id -un)\" = pocketos && test \"$(id -u)\" != 0 && " +
                 "test -f /var/lib/pocketos/user-setup-complete && echo __POCKETOS_ACCOUNT_AND_DISK_OK__\n"
         process.writeSerial(command.toByteArray(Charsets.UTF_8))
-        assertTrue(
-            "Guest login, non-root account, or persistent first-run marker failed",
-            console.await("__POCKETOS_ACCOUNT_AND_DISK_OK__", process, PROMPT_TIMEOUT_MS),
-        )
+        awaitStage("Checking non-root identity and persistent first-run marker", "__POCKETOS_ACCOUNT_AND_DISK_OK__", console, process, stderr, PROMPT_TIMEOUT_MS)
     }
 
-    private fun gracefulQmpShutdown(process: NativeProcessHandle, socket: File) {
-        QmpClient().requestQuit(socket.absolutePath, timeoutMillis = QMP_TIMEOUT_MS)
-        assertTrue("QEMU did not exit after QMP quit", process.awaitExit(QMP_EXIT_TIMEOUT_MS, TimeUnit.SECONDS))
+    private fun gracefulQmpShutdown(
+        process: NativeProcessHandle,
+        socket: File,
+        console: SerialCapture,
+        stderr: BoundedDiagnosticCapture,
+    ) {
+        reportStage("Requesting graceful QMP shutdown")
+        try {
+            QmpClient().requestQuit(socket.absolutePath, timeoutMillis = QMP_TIMEOUT_MS)
+        } catch (failure: Exception) {
+            throw AssertionError("QMP shutdown request failed. ${diagnosticSummary(process, console, stderr)}", failure)
+        }
+        assertTrue("QEMU did not exit after QMP quit. ${diagnosticSummary(process, console, stderr)}", process.awaitExit(QMP_EXIT_TIMEOUT_MS, TimeUnit.SECONDS))
         assertEquals("QEMU did not exit cleanly after QMP quit", 0, process.exitCode)
+        reportStage("QEMU exited cleanly through QMP")
     }
 
     private fun startGuest(
@@ -170,6 +168,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         disk: File,
         qmpSocket: File,
         console: SerialCapture,
+        stderr: BoundedDiagnosticCapture,
     ): NativeProcessHandle {
         qmpSocket.delete()
         val launch = QemuLaunchConfig(
@@ -186,6 +185,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             command = launch.toCommand(),
             workingDirectory = context.filesDir,
             onSerialOutput = console::receive,
+            onDiagnosticOutput = stderr::append,
         )
     }
 
@@ -243,16 +243,15 @@ class QemuAndroidRuntimeInstrumentationTest {
         assumeTrue("ARM64 Android runtime required", File(context.applicationInfo.nativeLibraryDir).name == "arm64")
     }
 
-    private class SerialCapture {
+    private class SerialCapture(private val password: String) {
         private val lock = Object()
-        private val text = StringBuilder()
+        private val capture = BoundedDiagnosticCapture(MAX_SERIAL_CHARS).apply { redact(password) }
         val probe = GuestReadinessProbe()
 
         fun receive(bytes: ByteArray) {
             probe.onSerialOutput(bytes)
             synchronized(lock) {
-                text.append(String(bytes, Charsets.UTF_8))
-                if (text.length > MAX_SERIAL_CHARS) text.delete(0, text.length - MAX_SERIAL_CHARS)
+                capture.append(bytes)
                 lock.notifyAll()
             }
         }
@@ -260,7 +259,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         fun await(token: String, process: NativeProcessHandle, timeoutMs: Long): Boolean {
             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
             synchronized(lock) {
-                while (!text.contains(token)) {
+                while (!capture.snapshot().contains(token)) {
                     if (!process.isAlive || System.nanoTime() >= deadline) return false
                     val remaining = deadline - System.nanoTime()
                     val waitMs = TimeUnit.NANOSECONDS.toMillis(remaining).coerceAtLeast(1).coerceAtMost(250)
@@ -269,15 +268,62 @@ class QemuAndroidRuntimeInstrumentationTest {
                 return true
             }
         }
+
+        fun diagnosticTail(): String = capture.snapshot()
+    }
+
+    private fun awaitStage(
+        stage: String,
+        token: String,
+        console: SerialCapture,
+        process: NativeProcessHandle,
+        stderr: BoundedDiagnosticCapture,
+        timeoutMs: Long,
+    ) {
+        reportStage(stage)
+        if (!console.await(token, process, timeoutMs)) {
+            throw AssertionError("Timed out: $stage. ${diagnosticSummary(process, console, stderr)}")
+        }
+        reportStage("Reached: $stage")
+    }
+
+    private fun diagnosticSummary(
+        process: NativeProcessHandle,
+        console: SerialCapture,
+        stderr: BoundedDiagnosticCapture,
+    ): String = "qemuAlive=${process.isAlive}; serialTail=${console.diagnosticTail()}; qemuStderrTail=${stderr.snapshot()}"
+
+    private fun stopIfStillRunning(stage: String, process: NativeProcessHandle?) {
+        if (process?.isAlive != true) return
+        val wasInterrupted = Thread.interrupted()
+        try {
+            reportStage("Forcibly stopping QEMU after $stage did not shut down cleanly")
+            val stopped = process.forceStop(timeout = CLEANUP_TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+            if (!stopped) Log.e(TAG, "QEMU remained alive after bounded cleanup stage=$stage")
+        } catch (failure: Exception) {
+            Log.e(TAG, "QEMU cleanup encountered an error stage=$stage", failure)
+        } finally {
+            if (wasInterrupted) Thread.currentThread().interrupt()
+        }
+    }
+
+    private fun reportStage(stage: String) {
+        Log.i(TAG, "stage=$stage")
+        InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+            putString("pocketos.stage", stage)
+        })
     }
 
     companion object {
+        private const val TAG = "PocketOSRuntimeTest"
+        private const val MAX_GUEST_TEST_DURATION_MS = 12 * 60 * 1_000L
         private const val GUEST_BOOT_TIMEOUT_MS = 180_000L
         private const val PROMPT_TIMEOUT_MS = 30_000L
         private const val QMP_TIMEOUT_MS = 5_000
         private const val QMP_EXIT_TIMEOUT_MS = 15L
         private const val MIN_TEST_STORAGE_BYTES = 600L * 1024L * 1024L
         private const val EXT4_MAGIC_OFFSET = 1080L
-        private const val MAX_SERIAL_CHARS = 65_536
+        private const val MAX_SERIAL_CHARS = 8_192
+        private const val CLEANUP_TIMEOUT_SECONDS = 10L
     }
 }

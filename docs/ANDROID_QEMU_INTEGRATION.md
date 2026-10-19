@@ -1,6 +1,14 @@
 # Android QEMU integration
 
-Status: Android ARM64 QEMU and Alpine guest assets are built and packaged. The generated guest image locks the root password, verified directly from both ext4 images in CI. The app-private installer, serial readiness probe, session-protection primitives, and lifecycle coordinator are unit-tested. First-run account setup is now included in the seed-image build; the updated CI run has not yet verified it. Android-side QEMU execution, guest boot, and service integration remain unverified; the VM service remains fail-closed.
+Status: Android ARM64 QEMU and Alpine guest assets are built and packaged. The Vivo I2501 confirmed installation, dashboard launch, and execution of packaged QEMU 11.1.2. The full Alpine instrumentation test started but had no completion result after roughly 16–20 minutes. This is inconclusive: the serial transcript and QEMU stderr were not recorded by that build, so the exact guest boot stage and root cause are unknown. The runtime validation gate remains closed and the VM service remains fail-closed.
+
+## Physical ARM64 stall evidence
+
+The uploaded logcat shows `packagedArm64QemuRunsOnAndroid` completed, then `bootsFreshAlpineSetsPasswordLogsInPersistsAndQuitsThroughQmp` started. A later run shows the same ordering; no `finished` event for the Alpine test appears in the captured log. The process snapshot shows PocketOS PID 6019 and child QEMU PID 6108; QEMU is sleeping with 5 threads, about 14 MiB resident memory, and about 216 MiB swapped. `/proc/6108/wchan` is `0`, which does not identify a wait site. The supplied snapshots do not expose serial output, QEMU stderr, per-thread stacks, or time-separated CPU counters. The full logcat has no PocketOS exception, AndroidRuntime crash, or correlated low-memory kill around the second run. These facts establish a live stalled or prolonged test, but do not establish seccomp, SELinux, Android 16, memory pressure, or Alpine as the cause.
+
+The tested APK build identity was verified from the GitHub Actions handoff artifact. `dist/build-info.txt` records merge commit `a3996bb1230373fd0fa7d0b6fd1a4421ef4e5353`, and the APK artifact names use that SHA. Its Git tree is identical to branch commit `3e262897a2c3b827fb847fec8006dc46d3526fee`, which the user reported as the tested commit. Workflow run #176 was later marked cancelled even though APK artifacts and the test handoff had been uploaded. The new diagnostic test build adds bounded progress and output capture; it does not claim the guest boot issue is fixed.
+
+The refreshed ARM64 test reports each boot stage, captures bounded password-redacted serial and stderr tails on failure, and has a 12-minute hard test timeout. It continues to use a throwaway copy of the packaged seed and keeps the runtime gate closed until the physical test passes.
 
 ## Verified build and package boundary
 

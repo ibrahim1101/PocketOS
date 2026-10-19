@@ -1,6 +1,6 @@
 # Physical ARM64 Android testing
 
-This handoff is for the first PocketOS run on an unrooted ARM64 Android device. The APKs and instrumentation APK are built together in one GitHub Actions job from one commit. The workflow uploads build hashes and Android emulator test results. The Android NDK and local QEMU compilation are not required.
+This handoff is for testing PocketOS on an unrooted ARM64 Android device. The APKs and instrumentation APK are built together in one GitHub Actions job from one commit. The workflow uploads build hashes and Android emulator test results. The Android NDK and local QEMU compilation are not required.
 
 ## Download the APK artifacts
 
@@ -44,24 +44,46 @@ $TestApk = Join-Path $ArtifactDir "PocketOS-androidTest.apk"
 
 Expected ABI: arm64-v8a. Android 16 may report release 16 or API level 36.
 
+Verify the runner is installed, then run the ARM64 QEMU executable check and full guest workflow independently. The guest test has a hard 12-minute timeout. It logs each stage and, on a timeout, includes only bounded serial and QEMU-stderr tails with password redaction. It uses an isolated temporary guest disk and never changes the user's persistent guest disk.
+
 ```powershell
 $ResultsDir = Join-Path $ArtifactDir "device-results"
 New-Item -ItemType Directory -Force $ResultsDir | Out-Null
-$TestOutput = & $Adb -s $Serial shell am instrument -w -r com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner 2>&1
-$TestExitCode = $LASTEXITCODE
-$TestText = ($TestOutput -join [Environment]::NewLine) -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
-$TestText | Set-Content -Encoding utf8 (Join-Path $ResultsDir "instrumentation-results.txt")
-$TestText
-"Instrumentation exit code: $TestExitCode"
+& $Adb -s $Serial shell pm list instrumentation | Tee-Object (Join-Path $ResultsDir "instrumentation-runners.txt")
+
+$NativeOutput = & $Adb -s $Serial shell am instrument -w -r `
+  -e class 'com.pocketos.app.QemuAndroidRuntimeInstrumentationTest#packagedArm64QemuRunsOnAndroid' `
+  com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner 2>&1
+$NativeExitCode = $LASTEXITCODE
+$NativeText = ($NativeOutput -join [Environment]::NewLine) -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
+$NativeText | Set-Content -Encoding utf8 (Join-Path $ResultsDir "qemu-native-test.txt")
+$NativeText
+"Native test exit code: $NativeExitCode"
+
+$GuestOutput = & $Adb -s $Serial shell am instrument -w -r `
+  -e class 'com.pocketos.app.QemuAndroidRuntimeInstrumentationTest#bootsFreshAlpineSetsPasswordLogsInPersistsAndQuitsThroughQmp' `
+  com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner 2>&1
+$GuestExitCode = $LASTEXITCODE
+$GuestText = ($GuestOutput -join [Environment]::NewLine) -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
+$GuestText | Set-Content -Encoding utf8 (Join-Path $ResultsDir "alpine-guest-test.txt")
+$GuestText
+"Guest test exit code: $GuestExitCode"
 ```
 
-A zero exit code and OK (… tests) indicate the runner passed. ARM64 runtime tests must execute rather than show assumption skips. The guest test provisions a random password only on an isolated temporary copy of the packaged seed disk; it does not modify the user's persistent guest disk or print the password.
+A zero exit code and `OK (1 test)` indicate a pass. Runtime tests must execute rather than show assumption skips. `INSTRUMENTATION_STATUS: pocketos.stage=...` and `PocketOSRuntimeTest` logcat entries show progress. The full guest run covers seed integrity, first-run password setup, non-root login, persistence across reboot, and QMP shutdown.
 
 ## Capture sanitized device diagnostics
 
 ```powershell
-$LogLines = & $Adb -s $Serial logcat -d -v threadtime -s PocketOS:D AndroidRuntime:E TestRunner:I InstrumentationResultPrinter:I 2>&1
-$LogText = ($LogLines -join [Environment]::NewLine) -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
+# Read the full buffer so diagnosis is not limited to a tag-filtered capture. Only a
+# whitelist of PocketOS/test and process-health lines is written to the shared report.
+$FullLog = & $Adb -s $Serial logcat -d -v threadtime 2>&1
+$RelevantLog = $FullLog | Where-Object {
+  $_ -match 'PocketOSRuntimeTest|TestRunner|AndroidJUnitRunner|InstrumentationResultPrinter' -or
+  $_ -match '(?i)lmkd|lowmemory|out of memory|fatal signal|avc: denied|ANR in' -or
+  $_ -match 'ActivityManager.*(com\.pocketos\.app|libqemu-system-aarch64)'
+}
+$LogText = ($RelevantLog -join [Environment]::NewLine) -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
 $LogText | Set-Content -Encoding utf8 (Join-Path $ResultsDir "logcat-sanitized.txt")
 
 $ServiceInfo = & $Adb -s $Serial shell dumpsys activity services com.pocketos.app 2>&1
@@ -81,12 +103,13 @@ Review the files before sharing. Do not attach passwords, private keys, or an ex
 
 1. QEMU native launch: the executable runs from Android's extracted ARM64 native-library directory, reports QEMU 11.1.2, and exits 0.
 2. Asset integrity and disk initialization: the app-private installer initializes a valid ext4 seed; the test verifies the compressed seed hash before creating its isolated copy.
-3. Guest boot and serial readiness: Alpine reaches New password: within 180 seconds and the readiness probe recognizes it.
+3. Guest boot and serial readiness: Alpine reaches `New password:` or `pocketos login:` within 180 seconds. The runner reports the stage as it proceeds.
 4. First-run setup and login: the test sends an ephemeral random credential over serial, waits for setup completion, logs in as pocketos, and verifies a non-root UID.
 5. Persistence: the test performs QMP quit, boots the same isolated disk again, logs in, and verifies the setup marker and non-root account persist.
 6. Graceful shutdown: both QMP quit requests complete, QEMU exits with status 0, and disk leases release.
 7. Failure diagnostics: a separate Android instrumentation test verifies stderr capture and nonzero child-process exit status.
-8. Runtime gate: only successful QEMU execution and guest-boot tests record version-scoped evidence. If either ARM64 test fails or is skipped, the PocketOS start gate remains closed.
+8. Bounded duration and cleanup: the complete Alpine workflow ends within 12 minutes. On failure it reports the last completed stage and sanitized bounded serial/stderr tails; QEMU is force-stopped if QMP shutdown did not complete.
+9. Runtime gate: only successful QEMU execution and guest-boot tests record version-scoped evidence. If either ARM64 test fails or is skipped, the PocketOS start gate remains closed.
 
 Host QEMU and Android x86_64 emulator runs do not establish physical ARM64 compatibility. The Vivo test is the first device-level proof. Report actual outputs and failures before enabling real PocketOS sessions.
 
