@@ -19,8 +19,8 @@ gh run download $RunId --repo $Repo --name "pocketos-test-handoff-$Commit" --dir
 
 Get-FileHash (Join-Path $ArtifactDir "PocketOS-debug.apk") -Algorithm SHA256
 Get-FileHash (Join-Path $ArtifactDir "PocketOS-androidTest.apk") -Algorithm SHA256
-Get-Content (Join-Path $ArtifactDir "build-info.txt")
-Get-Content (Join-Path $ArtifactDir "SHA256SUMS")
+Get-Content (Join-Path $ArtifactDir "dist\build-info.txt")
+Get-Content (Join-Path $ArtifactDir "dist\SHA256SUMS")
 ```
 
 The workflow must show success before treating the APKs as a validated handoff. Check that build-info.txt contains the same commit SHA used in the artifact names.
