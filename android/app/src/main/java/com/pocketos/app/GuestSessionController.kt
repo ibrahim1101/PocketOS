@@ -162,6 +162,7 @@ class GuestSessionController(
             }
         }
 
+        val processToStop = currentProcess ?: return true
         try {
             guest?.requestGracefulShutdown?.invoke()
         } catch (_: Exception) {
@@ -169,12 +170,12 @@ class GuestSessionController(
         }
 
         val stoppedGracefully = runCatching {
-            currentProcess.awaitExit(gracefulShutdownTimeoutMs, TimeUnit.MILLISECONDS)
+            processToStop.awaitExit(gracefulShutdownTimeoutMs, TimeUnit.MILLISECONDS)
         }.getOrDefault(false)
         if (!stoppedGracefully) {
-            runCatching { currentProcess.forceStop(forceStopTimeoutMs, TimeUnit.MILLISECONDS) }
+            runCatching { processToStop.forceStop(forceStopTimeoutMs, TimeUnit.MILLISECONDS) }
         }
-        if (!currentProcess.isAlive) finishProcess(currentProcess)
+        if (!processToStop.isAlive) finishProcess(processToStop)
         return true
     }
 
