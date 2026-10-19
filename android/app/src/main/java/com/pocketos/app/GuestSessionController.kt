@@ -234,12 +234,12 @@ class GuestSessionController(
             deadlineTask?.cancel()
             deadlineTask = null
 
+            if (lastStopReason == null) lastStopReason = GuestStopReason.UNEXPECTED_EXIT
             if (lifecycle.state == VmState.FAILED) {
                 coordinator.clearSession()
             } else {
                 coordinator.onProcessExited()
             }
-            if (lastStopReason == null) lastStopReason = GuestStopReason.UNEXPECTED_EXIT
             process = null
             releaseGuestLocked()
         }
