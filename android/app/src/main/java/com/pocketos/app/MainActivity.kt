@@ -225,11 +225,77 @@ class MainActivity : Activity() {
             add("The disk stays in private app storage across guest restarts.")
             add("Device free space is not the guest filesystem's free space.")
             add("Export creates a byte-for-byte ext4 backup while the guest disk is stopped.")
-            add("Disk resizing and import are not enabled yet.")
+            add("Guest disk growth expands ext4 at next boot.")
+            add("Import replaces the persistent disk; export a backup first.")
         }.joinToString("\n")
         AlertDialog.Builder(this).setTitle("Storage").setMessage(details)
             .setPositiveButton("Export disk") { _, _ -> requestDiskExport() }
-            .setNegativeButton("Close", null).show()
+            .setNegativeButton("Close", null)
+            .setNeutralButton("Manage") { _, _ -> showStorageActions() }
+            .show()
+    }
+
+    private fun showStorageActions() {
+        AlertDialog.Builder(this).setTitle("Guest disk")
+            .setItems(arrayOf("Import ext4 backup…", "Grow disk…")) { _, index ->
+                if (index == 0) confirmDiskImport() else requestDiskGrowth()
+            }.setNegativeButton("Close", null).show()
+    }
+
+    private fun confirmDiskImport() {
+        AlertDialog.Builder(this).setTitle("Replace guest disk?")
+            .setMessage("Import replaces all data in the persistent Linux disk. Import only a trusted ext4 backup. Export the current disk first if you may need it.")
+            .setPositiveButton("Choose backup") { _, _ ->
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/octet-stream"
+                    putExtra(Intent.EXTRA_TITLE, "pocketos-rootfs.ext4")
+                }
+                startActivityForResult(intent, REQUEST_DISK_IMPORT)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun requestDiskGrowth() {
+        val disk = java.io.File(filesDir, "guest/rootfs.ext4")
+        val currentMiB = disk.length() / (1024L * 1024L)
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            hint = "New image size in MiB"
+            setText((currentMiB + 256).toString())
+        }
+        AlertDialog.Builder(this).setTitle("Grow guest disk")
+            .setMessage("Enter a larger raw image size in MiB. ext4 expands during the next guest boot.")
+            .setView(input).setPositiveButton("Grow") { _, _ ->
+                val requested = input.text.toString().toLongOrNull()
+                if (requested == null || requested <= currentMiB) {
+                    Toast.makeText(this, "Choose a size larger than ${currentMiB} MiB", Toast.LENGTH_LONG).show()
+                } else runDiskOperation("Growing guest disk…") {
+                    val bytes = Math.multiplyExact(requested, 1024L * 1024L)
+                    GuestDiskManager.grow(disk, bytes)
+                    "Guest disk grew to ${GuestStorageStatus.formatBytes(bytes)}; ext4 expands on next start"
+                }
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun runDiskOperation(message: String, operation: () -> String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Thread {
+            runCatching(operation).onSuccess { result ->
+                runOnUiThread { Toast.makeText(this, result, Toast.LENGTH_LONG).show() }
+            }.onFailure { error ->
+                runOnUiThread { Toast.makeText(this, error.message ?: "Guest disk operation failed", Toast.LENGTH_LONG).show() }
+            }
+        }.start()
+    }
+
+    private fun importGuestDisk(uri: android.net.Uri) {
+        val disk = java.io.File(filesDir, "guest/rootfs.ext4")
+        runDiskOperation("Validating and importing guest disk…") {
+            GuestDiskManager.restore(disk) {
+                contentResolver.openInputStream(uri) ?: error("Could not open the selected backup")
+            }
+            "Guest ext4 backup imported"
+        }
     }
 
     private fun requestDiskExport() {
@@ -246,6 +312,10 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_DIAGNOSTICS_EXPORT) {
             if (resultCode == RESULT_OK) data?.data?.let(::exportDiagnostics)
+            return
+        }
+        if (requestCode == REQUEST_DISK_IMPORT) {
+            if (resultCode == RESULT_OK) data?.data?.let(::importGuestDisk)
             return
         }
         if (requestCode != REQUEST_DISK_EXPORT || resultCode != RESULT_OK) return
@@ -378,6 +448,7 @@ class MainActivity : Activity() {
         private const val REQUEST_NOTIFICATIONS = 42
         private const val REQUEST_DISK_EXPORT = 43
         private const val REQUEST_DIAGNOSTICS_EXPORT = 44
+        private const val REQUEST_DISK_IMPORT = 45
         private const val SETTINGS_PREFS = "guest_settings"
         private const val MAX_TERMINAL_CHARS = 32_768
     }

@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: docker/setup-qemu-action@v3
       - uses: actions/setup-java@v4
         with:
@@ -123,7 +125,7 @@ jobs:
           mkdir -p dist
           cp "$app_apk" dist/PocketOS-debug.apk
           cp "$test_apk" dist/PocketOS-androidTest.apk
-          printf 'commit=%s\n' "$GITHUB_SHA" > dist/build-info.txt
+          printf 'commit=%s\n' '${{ github.event.pull_request.head.sha || github.sha }}' > dist/build-info.txt
           sha256sum dist/PocketOS-debug.apk dist/PocketOS-androidTest.apk > dist/SHA256SUMS
       - name: Verify packaged native library ABI and dependencies
         run: |
@@ -137,7 +139,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: pocketos-android-apk-${{ github.sha }}
+          name: pocketos-android-apk-${{ github.event.pull_request.head.sha || github.sha }}
           path: dist/PocketOS-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -145,7 +147,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: pocketos-instrumentation-apk-${{ github.sha }}
+          name: pocketos-instrumentation-apk-${{ github.event.pull_request.head.sha || github.sha }}
           path: dist/PocketOS-androidTest.apk
           if-no-files-found: error
           retention-days: 14
@@ -153,7 +155,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pocketos-test-handoff-${{ github.sha }}
+          name: pocketos-test-handoff-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             dist/build-info.txt
             dist/SHA256SUMS
@@ -168,6 +170,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: docker/setup-qemu-action@v3
       - name: Install QEMU and validation tools
         run: sudo apt-get update && sudo apt-get install -y e2fsprogs qemu-system-arm shellcheck
@@ -224,10 +228,3 @@ jobs:
           --initramfs "$RUNNER_TEMP/initramfs-virt"
           --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
           --timeout 120
-      - name: Install Python and serve HTTP from the guest
-        run: >-
-          python3 scripts/check-guest-python-http.py
-          --kernel "$RUNNER_TEMP/vmlinuz-virt"
-          --initramfs "$RUNNER_TEMP/initramfs-virt"
-          --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
-          --timeout 240

@@ -89,3 +89,8 @@ Review the files before sharing. Do not attach passwords, private keys, or an ex
 8. Runtime gate: only successful QEMU execution and guest-boot tests record version-scoped evidence. If either ARM64 test fails or is skipped, the PocketOS start gate remains closed.
 
 Host QEMU and Android x86_64 emulator runs do not establish physical ARM64 compatibility. The Vivo test is the first device-level proof. Report actual outputs and failures before enabling real PocketOS sessions.
+
+## Storage management
+
+- Storage → Manage → Grow disk grows the raw image while stopped; ext4 expands on next boot.
+- Storage → Manage → Import ext4 backup confirms replacement, validates the selected image, stages it, then atomically replaces the disk while stopped. Export first if current data may be needed.

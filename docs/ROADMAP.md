@@ -24,3 +24,15 @@
 - Localhost-only hostfwd, explicit opt-in LAN exposure
 - Local HTTP/SSH smoke tests and binding security checks
 - Optional public tunnel in a later release
+
+## M6 — Persistent storage management
+- Private ext4 capacity and free-space reporting
+- Byte-for-byte backup export while stopped
+- Validated ext4 backup import with staged atomic replacement and confirmation
+- Disk image growth followed by automatic ext4 expansion on next boot
+
+## M7 — Android networking
+- Localhost-only host forwarding by default
+- Explicit Wi-Fi LAN exposure bound to the active Wi-Fi address
+- CI localhost-forwarding and loopback-binding checks
+- Physical-device validation remains required

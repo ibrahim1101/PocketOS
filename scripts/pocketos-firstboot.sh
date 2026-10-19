@@ -2,6 +2,11 @@
 # One-time non-root login provisioning. This script runs as root on the guest serial TTY.
 set -eu
 
+# Android can grow the raw image; expand mounted ext4 before login.
+if command -v resize2fs >/dev/null 2>&1; then
+  resize2fs /dev/vda || printf 'PocketOS: ext4 auto-grow failed; disk remains available.\\n'
+fi
+
 marker=/var/lib/pocketos/user-setup-complete
 if [ ! -e "$marker" ]; then
   printf '\nPocketOS first boot: creating the pocketos account\n'

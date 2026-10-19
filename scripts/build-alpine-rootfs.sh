@@ -28,7 +28,7 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   mkdir -p /guest/etc/apk/keys /guest/etc/network /guest/etc/runlevels/default /guest/etc/runlevels/boot /guest/etc/runlevels/sysinit
   cp /etc/apk/keys/* /guest/etc/apk/keys/
   printf "https://dl-cdn.alpinelinux.org/alpine/%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/%s/community\n" "$ALPINE_REPOSITORY_BRANCH" "$ALPINE_REPOSITORY_BRANCH" > /guest/etc/apk/repositories
-  apk --root /guest --initdb --arch aarch64 add --no-cache alpine-base openrc busybox-openrc busybox-extras util-linux linux-virt
+  apk --root /guest --initdb --arch aarch64 add --no-cache alpine-base openrc busybox-openrc busybox-extras util-linux e2fsprogs linux-virt
   # Leave no usable root password in the distributed seed image.
   sed -i "s/^root:[^:]*:/root:!:/" /guest/etc/shadow
   grep -q "^root:!:" /guest/etc/shadow
