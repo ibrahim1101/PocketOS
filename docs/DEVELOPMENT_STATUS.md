@@ -4,9 +4,9 @@ Updated: 2026-10-19
 
 ## Current state
 
-- Active milestone: M2 — Android ARM64 QEMU build, guest assets, and service integration.
+- Active milestones: M6 — persistent storage management and M7 — localhost/LAN networking.
 - Active branch: feat/m1-linux-boot; PR #1 remains open.
-- Latest fully passing CI revision: pending after storage reporting update.
+- Latest fully passing feature validation: run #161. Storage reporting/export and Wi-Fi LAN additions await the current CI run.
 - The APK packages QEMU 11.1.2, Alpine's matching kernel and initramfs, a compressed ext4 seed disk, and a SHA-256 manifest. CI verifies the root password is locked in the generated seed image.
 - The app installs and verifies guest assets in private storage. Unit and Android instrumentation tests cover disk integrity, repeat install, exclusive disk leasing, VM lifecycle, readiness, session policy, and runtime-gate decisions.
 - Host CI boots Alpine under QEMU, provisions a non-root pocketos account through hidden serial password prompts, verifies login after restart, runs Linux commands, checks ext4 persistence, and tests localhost HTTP forwarding.

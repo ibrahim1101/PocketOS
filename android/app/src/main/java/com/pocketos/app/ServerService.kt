@@ -125,26 +125,28 @@ class ServerService : Service() {
 
     private fun prepareGuest(): PreparedGuest {
         val assets = GuestAssetInstaller.forContext(this).install()
-        val lease = GuestDiskLease.acquire(assets.rootDisk)
         val qmpSocket = File(filesDir, "pocketos-qmp.sock")
         qmpSocket.delete()
         val executable = File(applicationInfo.nativeLibraryDir, "libqemu-system-aarch64.so")
         check(executable.isFile && executable.canExecute()) { "Packaged ARM64 QEMU executable is unavailable" }
         val settings = GuestRuntimeSettings.load(getSharedPreferences(SETTINGS_PREFS, MODE_PRIVATE))
+        val hostBindAddress = if (settings.lanExposureEnabled) {
+            WifiLanAddress.activeIpv4(this)
+                ?: error("LAN exposure requires an active Wi-Fi network with an IPv4 address")
+        } else {
+            "127.0.0.1"
+        }
         val config = QemuLaunchConfig(
             executable, assets.kernel, assets.initramfs, assets.rootDisk, qmpSocket,
             memoryMiB = settings.memoryMiB,
             vcpus = settings.vcpus,
             hostHttpPort = settings.hostHttpPort,
-            hostBindAddress = if (settings.lanExposureEnabled) {
-                WifiLanAddress.activeIpv4(this)
-                    ?: error("LAN exposure requires an active Wi-Fi network with an IPv4 address")
-            } else {
-                "127.0.0.1"
-            },
+            hostBindAddress = hostBindAddress,
         )
+        val command = config.toCommand()
+        val lease = GuestDiskLease.acquire(assets.rootDisk)
         return PreparedGuest(
-            command = config.toCommand(),
+            command = command,
             workingDirectory = filesDir,
             diskLease = lease,
             requestGracefulShutdown = { QmpClient().requestQuit(qmpSocket.absolutePath) },
