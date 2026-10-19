@@ -32,7 +32,7 @@ class GuestBootCoordinatorTest {
         assertEquals(VmState.BOOTING, lifecycle.state)
         assertEquals(
             GuestBootEvent.READY,
-            coordinator.onSerialOutput("POCKETOS_FIRST_BOOT: set a password for account pocketos\\r\\n".toByteArray(), 80),
+            coordinator.onSerialOutput("POCKETOS_FIRST_BOOT: set a password for account pocketos\r\n".toByteArray(), 80),
         )
         assertEquals(VmState.RUNNING, lifecycle.state)
         assertEquals(4_000L, store.checkpoint?.startedAtElapsedMs)
