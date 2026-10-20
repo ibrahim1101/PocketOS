@@ -39,4 +39,5 @@
 
 ## M9 — Real server workloads
 - CI installs Python 3 in the Alpine guest, runs a Python HTTP server, and verifies its response through localhost-only QEMU forwarding
+- CI verifies SQLite database creation, commit, close, reopen, and row retrieval in the Alpine guest
 - Physical-device validation of package installation and workloads remains required

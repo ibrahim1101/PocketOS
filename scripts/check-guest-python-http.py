@@ -198,6 +198,17 @@ def main() -> int:
             "python3 -c 'import sys; assert sys.version_info.major == 3; print(sys.version)'",
             "PYTHON_RUNS", args.timeout,
         )
+        print("Checking SQLite create, commit, and reopen in the guest.", flush=True)
+        run_command(
+            process, master_fd, buffer,
+            "python3 -c 'import sqlite3; path=\"/root/pocketos-workload.sqlite3\"; "
+            "db=sqlite3.connect(path); db.execute(\"CREATE TABLE IF NOT EXISTS workload (name TEXT, hits INTEGER)\"); "
+            "db.execute(\"DELETE FROM workload\"); db.execute(\"INSERT INTO workload VALUES (?, ?)\", (\"PocketOS\", 1)); "
+            "db.commit(); db.close(); db=sqlite3.connect(path); "
+            "assert db.execute(\"SELECT name, hits FROM workload\").fetchone() == (\"PocketOS\", 1); "
+            "print(sqlite3.sqlite_version); db.close()'",
+            "SQLITE_WORKLOAD_OK", args.timeout,
+        )
         print("Starting Python HTTP server in guest.", flush=True)
         run_command(
             process, master_fd, buffer,
