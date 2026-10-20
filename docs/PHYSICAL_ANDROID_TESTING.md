@@ -44,7 +44,7 @@ $TestApk = Join-Path $ArtifactDir "PocketOS-androidTest.apk"
 
 Expected ABI: arm64-v8a. Android 16 may report release 16 or API level 36.
 
-Verify the runner is installed, then run the ARM64 QEMU executable check and full guest workflow independently. The guest test has a hard 12-minute timeout. It logs each stage, emits a 15-second heartbeat while waiting for guest serial output, and captures bounded QEMU thread state, CPU ticks, serial output, and stderr. Procfs fields are best effort because Android may restrict them. Timeout diagnostics redact the ephemeral test password. The test uses an isolated temporary guest disk and never changes the user's persistent guest disk.
+Verify the runner is installed, then run the ARM64 QEMU executable check and full guest workflow independently. The guest test has a hard 12-minute timeout. It logs each stage, emits a 15-second heartbeat while waiting for guest serial output, and captures bounded QEMU thread state, cumulative CPU ticks and per-interval CPU deltas, serial output, and stderr. Procfs fields are best effort because Android may restrict them. Timeout diagnostics redact the ephemeral test password. The test uses an isolated temporary guest disk and never changes the user's persistent guest disk.
 
 ```powershell
 $ResultsDir = Join-Path $ArtifactDir "device-results"
