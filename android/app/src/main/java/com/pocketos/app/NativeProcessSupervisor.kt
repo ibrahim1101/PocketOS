@@ -78,4 +78,59 @@ class NativeProcessHandle internal constructor(private val process: Process) : G
         }
         return process.waitFor(timeout, unit)
     }
+
+    /** Best-effort, bounded snapshot of procfs fields that help distinguish an idle guest from active TCG work. */
+    fun diagnosticSnapshot(): String = runCatching {
+        val ownerPid = android.os.Process.myPid()
+        val childPids = readProcFile(File("/proc/$ownerPid/task/$ownerPid/children"))
+            .split(Regex("\\s+"))
+            .mapNotNull { it.toIntOrNull() }
+        val qemuProcesses = childPids.asSequence()
+            .map { File("/proc/$it") }
+            .filter { directory -> readProcFile(File(directory, "cmdline")).contains(QEMU_EXECUTABLE_MARKER) }
+            .take(MAX_DIAGNOSTIC_PROCESSES)
+            .toList()
+        if (qemuProcesses.isEmpty()) return "qemuProcfs=unavailable alive=$isAlive childList=$childPids"
+
+        qemuProcesses.joinToString(prefix = "qemuProcfs=[", postfix = "]") { processDir ->
+            val status = readProcFile(File(processDir, "status"))
+            val statusFields = listOf(
+                "State", "VmRSS", "VmSwap", "Threads", "voluntary_ctxt_switches", "nonvoluntary_ctxt_switches",
+            ).mapNotNull { field ->
+                status.lineSequence().firstOrNull { it.startsWith("$field:") }?.trim()
+            }
+            val tasks = File(processDir, "task").listFiles()
+                ?.sortedBy { it.name.toIntOrNull() ?: Int.MAX_VALUE }
+                ?.take(MAX_DIAGNOSTIC_THREADS)
+                .orEmpty()
+                .joinToString(prefix = "[", postfix = "]") { task ->
+                    val taskStatus = readProcFile(File(task, "status"))
+                    val name = taskStatus.lineSequence().firstOrNull { it.startsWith("Name:") }
+                        ?.substringAfter(':')?.trim()?.take(32) ?: "?"
+                    val state = taskStatus.lineSequence().firstOrNull { it.startsWith("State:") }
+                        ?.substringAfter(':')?.trim()?.take(16) ?: "?"
+                    val switches = taskStatus.lineSequence()
+                        .firstOrNull { it.startsWith("voluntary_ctxt_switches:") }
+                        ?.substringAfter(':')?.trim() ?: "?"
+                    val wchan = readProcFile(File(task, "wchan")).ifEmpty { "?" }
+                    val cpuTicks = readCpuTicks(File(task, "stat"))
+                    "${task.name}:$name:$state:wchan=$wchan:cpu=$cpuTicks:vcsw=$switches"
+                }
+            "pid=${processDir.name} alive=$isAlive status=${statusFields.joinToString(",")}; threads=$tasks"
+        }
+    }.getOrElse { "qemuProcfs=unavailable alive=$isAlive reason=${it.javaClass.simpleName}" }
+
+    private fun readCpuTicks(statFile: File): String = runCatching {
+        val fields = statFile.readText().substringAfterLast(") ").trim().split(Regex("\\s+"))
+        // After the parenthesized comm, fields[0] is state (field 3), followed by ppid through stime.
+        "${fields[11]}+${fields[12]}"
+    }.getOrElse { "?" }
+
+    private fun readProcFile(file: File): String = runCatching { file.readText().trim() }.getOrElse { "unavailable" }
+
+    private companion object {
+        const val MAX_DIAGNOSTIC_THREADS = 8
+        const val MAX_DIAGNOSTIC_PROCESSES = 2
+        const val QEMU_EXECUTABLE_MARKER = "libqemu-system-aarch64.so"
+    }
 }

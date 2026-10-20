@@ -256,16 +256,31 @@ class QemuAndroidRuntimeInstrumentationTest {
             }
         }
 
-        fun await(token: String, process: NativeProcessHandle, timeoutMs: Long): Boolean {
+        fun await(
+            token: String,
+            process: NativeProcessHandle,
+            timeoutMs: Long,
+            onHeartbeat: () -> Unit,
+        ): Boolean {
             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
-            synchronized(lock) {
-                while (!capture.snapshot().contains(token)) {
-                    if (!process.isAlive || System.nanoTime() >= deadline) return false
-                    val remaining = deadline - System.nanoTime()
+            var nextHeartbeat = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(HEARTBEAT_INTERVAL_MS)
+            while (true) {
+                var emitHeartbeat = false
+                synchronized(lock) {
+                    if (capture.snapshot().contains(token)) return true
+                    val now = System.nanoTime()
+                    if (!process.isAlive || now >= deadline) return false
+                    val remaining = minOf(deadline - now, nextHeartbeat - now)
                     val waitMs = TimeUnit.NANOSECONDS.toMillis(remaining).coerceAtLeast(1).coerceAtMost(250)
                     lock.wait(waitMs)
+                    if (capture.snapshot().contains(token)) return true
+                    emitHeartbeat = System.nanoTime() >= nextHeartbeat
                 }
-                return true
+                if (emitHeartbeat) {
+                    // Keep procfs reads and logcat I/O outside the serial pump's monitor.
+                    onHeartbeat()
+                    nextHeartbeat = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(HEARTBEAT_INTERVAL_MS)
+                }
             }
         }
 
@@ -281,7 +296,17 @@ class QemuAndroidRuntimeInstrumentationTest {
         timeoutMs: Long,
     ) {
         reportStage(stage)
-        if (!console.await(token, process, timeoutMs)) {
+        val startedAt = System.nanoTime()
+        val reached = console.await(token, process, timeoutMs) {
+            val elapsedSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startedAt)
+            Log.i(
+                TAG,
+                "wait heartbeat stage=$stage elapsedSeconds=$elapsedSeconds " +
+                    "serialChars=${console.diagnosticTail().length} stderrChars=${stderr.snapshot().length}; " +
+                    process.diagnosticSnapshot(),
+            )
+        }
+        if (!reached) {
             throw AssertionError("Timed out: $stage. ${diagnosticSummary(process, console, stderr)}")
         }
         reportStage("Reached: $stage")
@@ -291,7 +316,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         process: NativeProcessHandle,
         console: SerialCapture,
         stderr: BoundedDiagnosticCapture,
-    ): String = "qemuAlive=${process.isAlive}; serialTail=${console.diagnosticTail()}; qemuStderrTail=${stderr.snapshot()}"
+    ): String = "${process.diagnosticSnapshot()}; serialTail=${console.diagnosticTail()}; qemuStderrTail=${stderr.snapshot()}"
 
     private fun stopIfStillRunning(stage: String, process: NativeProcessHandle?) {
         if (process?.isAlive != true) return
@@ -325,5 +350,6 @@ class QemuAndroidRuntimeInstrumentationTest {
         private const val EXT4_MAGIC_OFFSET = 1080L
         private const val MAX_SERIAL_CHARS = 8_192
         private const val CLEANUP_TIMEOUT_SECONDS = 10L
+        private const val HEARTBEAT_INTERVAL_MS = 15_000L
     }
 }

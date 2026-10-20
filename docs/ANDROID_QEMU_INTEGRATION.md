@@ -8,7 +8,7 @@ The uploaded logcat shows `packagedArm64QemuRunsOnAndroid` completed, then `boot
 
 The tested APK build identity was verified from the GitHub Actions handoff artifact. `dist/build-info.txt` records merge commit `a3996bb1230373fd0fa7d0b6fd1a4421ef4e5353`, and the APK artifact names use that SHA. Its Git tree is identical to branch commit `3e262897a2c3b827fb847fec8006dc46d3526fee`, which the user reported as the tested commit. Workflow run #176 was later marked cancelled even though APK artifacts and the test handoff had been uploaded. The new diagnostic test build adds bounded progress and output capture; it does not claim the guest boot issue is fixed.
 
-The refreshed ARM64 test reports each boot stage, captures bounded password-redacted serial and stderr tails on failure, and has a 12-minute hard test timeout. It continues to use a throwaway copy of the packaged seed and keeps the runtime gate closed until the physical test passes.
+The refreshed ARM64 test reports each boot stage, captures bounded password-redacted serial and stderr tails on failure, and has a 12-minute hard test timeout. While waiting for serial output it emits a 15-second heartbeat with QEMU child thread states, CPU ticks, context-switch counts, and best-effort wait-channel values; Android may restrict some procfs fields. It continues to use a throwaway copy of the packaged seed and keeps the runtime gate closed until the physical test passes.
 
 ## Verified build and package boundary
 
