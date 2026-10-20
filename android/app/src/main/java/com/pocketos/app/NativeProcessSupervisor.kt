@@ -53,6 +53,8 @@ class NativeProcessSupervisor : GuestProcessLauncher {
 }
 
 class NativeProcessHandle internal constructor(private val process: Process) : GuestProcess {
+    private val previousThreadCpuTicks = mutableMapOf<String, Long>()
+
     override val isAlive: Boolean
         get() = process.isAlive
 
@@ -80,6 +82,7 @@ class NativeProcessHandle internal constructor(private val process: Process) : G
     }
 
     /** Best-effort, bounded snapshot of procfs fields that help distinguish an idle guest from active TCG work. */
+    @Synchronized
     fun diagnosticSnapshot(): String = runCatching {
         val ownerPid = android.os.Process.myPid()
         val childPids = readProcFile(File("/proc/$ownerPid/task/$ownerPid/children"))
@@ -114,17 +117,24 @@ class NativeProcessHandle internal constructor(private val process: Process) : G
                         ?.substringAfter(':')?.trim() ?: "?"
                     val wchan = readProcFile(File(task, "wchan")).ifEmpty { "?" }
                     val cpuTicks = readCpuTicks(File(task, "stat"))
-                    "${task.name}:$name:$state:wchan=$wchan:cpu=$cpuTicks:vcsw=$switches"
+                    val previousTicks = if (cpuTicks >= 0) previousThreadCpuTicks.put(task.name, cpuTicks) else null
+                    val cpuValue = cpuTicks.takeIf { it >= 0 }?.toString() ?: "?"
+                    val cpuDelta = when {
+                        cpuTicks < 0 -> "?"
+                        previousTicks == null -> "first"
+                        else -> (cpuTicks - previousTicks).coerceAtLeast(0).toString()
+                    }
+                    "${task.name}:$name:$state:wchan=$wchan:cpuTicks=$cpuValue:cpuDeltaTicks=$cpuDelta:vcsw=$switches"
                 }
             "pid=${processDir.name} alive=$isAlive status=${statusFields.joinToString(",")}; threads=$tasks"
         }
     }.getOrElse { "qemuProcfs=unavailable alive=$isAlive reason=${it.javaClass.simpleName}" }
 
-    private fun readCpuTicks(statFile: File): String = runCatching {
+    private fun readCpuTicks(statFile: File): Long = runCatching {
         val fields = statFile.readText().substringAfterLast(") ").trim().split(Regex("\\s+"))
         // After the parenthesized comm, fields[0] is state (field 3), followed by ppid through stime.
-        "${fields[11]}+${fields[12]}"
-    }.getOrElse { "?" }
+        fields[11].toLong() + fields[12].toLong()
+    }.getOrElse { -1L }
 
     private fun readProcFile(file: File): String = runCatching { file.readText().trim() }.getOrElse { "unavailable" }
 

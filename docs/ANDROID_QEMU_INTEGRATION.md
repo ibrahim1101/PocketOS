@@ -8,7 +8,7 @@ The uploaded logcat shows `packagedArm64QemuRunsOnAndroid` completed, then `boot
 
 The tested APK build identity was verified from the GitHub Actions handoff artifact. `dist/build-info.txt` records merge commit `a3996bb1230373fd0fa7d0b6fd1a4421ef4e5353`, and the APK artifact names use that SHA. Its Git tree is identical to branch commit `3e262897a2c3b827fb847fec8006dc46d3526fee`, which the user reported as the tested commit. Workflow run #176 was later marked cancelled even though APK artifacts and the test handoff had been uploaded. The new diagnostic test build adds bounded progress and output capture; it does not claim the guest boot issue is fixed.
 
-The refreshed ARM64 test reports each boot stage, captures bounded password-redacted serial and stderr tails on failure, and has a 12-minute hard test timeout. While waiting for serial output it emits a 15-second heartbeat with QEMU child thread states, CPU ticks, context-switch counts, and best-effort wait-channel values; Android may restrict some procfs fields. It continues to use a throwaway copy of the packaged seed and keeps the runtime gate closed until the physical test passes.
+The refreshed ARM64 test reports each boot stage, captures bounded password-redacted serial and stderr tails on failure, and has a 12-minute hard test timeout. While waiting for serial output it emits a 15-second heartbeat with QEMU child thread states, cumulative CPU ticks and their change since the previous heartbeat, context-switch counts, and best-effort wait-channel values; Android may restrict some procfs fields. A `wchan=0` value alone does not identify the cause. Repeated `cpuDeltaTicks=0` with no serial/stderr growth would indicate that QEMU is not making observable CPU progress during that interval; increasing ticks would indicate active work, though neither result by itself identifies the boot stage. The test uses a throwaway copy of the packaged seed and keeps the runtime gate closed until the physical test passes.
 
 ## Verified build and package boundary
 
@@ -18,7 +18,7 @@ The cross-build downloads QEMU 11.1.2 from the pinned upstream archive and verif
 
 The APK contains an Android AArch64 PIE staged as `lib/arm64-v8a/libqemu-system-aarch64.so`. CI checks ELF machine, PIE type, `/system/bin/linker64`, required system libraries, and absence of RPATH/RUNPATH.
 
-The APK also contains Alpine's `vmlinuz-virt`, matching `initramfs-virt`, gzip-compressed ext4 seed disk, and SHA-256 manifest. The root account's password field is forcibly set to the locked marker in the image builder. The image includes a root-run first-boot serial setup that creates a `pocketos` account without a preset password, invokes `passwd` on the guest TTY, and records completion on the persistent disk. The password is entered interactively with echo disabled; it is not supplied in QEMU arguments, the environment, or log output. CI checks the root lock, confirms the seed has no preconfigured `pocketos` account, and verifies the inittab hook and setup script in both APK-seed and host-boot images. The host QEMU boot smoke test reaches the credential setup prompt. Android serial input is not yet connected, so first-run setup has not yet been completed from the app. `GuestAssetInstaller.forContext(context)` reads packaged assets, validates hashes, stores versioned boot assets in app-private storage, atomically expands and validates the disk, and preserves an existing disk on repeat install.
+The APK also contains Alpine's `vmlinuz-virt`, matching `initramfs-virt`, gzip-compressed ext4 seed disk, and SHA-256 manifest. The root account's password field is forcibly set to the locked marker in the image builder. The image includes a root-run first-boot serial setup that creates a `pocketos` account without a preset password, invokes `passwd` on the guest TTY, and records completion on the persistent disk. The password is entered interactively with echo disabled; it is not supplied in QEMU arguments, the environment, or log output. CI checks the root lock, confirms the seed has no preconfigured `pocketos` account, and verifies the inittab hook and setup script in both APK-seed and host-boot images. The host QEMU boot smoke test reaches the credential setup prompt. The app terminal is connected to QEMU serial input/output, but first-run setup has not yet been completed in the app on ARM64 Android. `GuestAssetInstaller.forContext(context)` reads packaged assets, validates hashes, stores versioned boot assets in app-private storage, atomically expands and validates the disk, and preserves an existing disk on repeat install.
 
 `GuestDiskLease` creates and locks a persistent sibling lock file for the lifetime of a guest disk writer. JVM tests and Android instrumentation verify that a second writer is rejected until the lease is closed, after which the disk can be leased again.
 
@@ -32,7 +32,7 @@ The APK also contains Alpine's `vmlinuz-virt`, matching `initramfs-virt`, gzip-c
 
 `GuestBootCoordinator` couples these components to `VmLifecycle`: process start advances to BOOTING, and the RUNNING transition requires a complete login prompt and a persisted session deadline. It reports low-battery rejection and clears the session checkpoint after a process exit. JVM tests cover readiness, timer start at the prompt, cutoff, clean shutdown, and unexpected exit.
 
-The APK asset install path has additionally been exercised on the Android x86_64 emulator. This does not test ARM64 QEMU execution. These are tested components only. `ServerService` does not yet call the installer, coordinator, battery monitor, session policy, or process supervisor.
+The APK asset install path has additionally been exercised on the Android x86_64 emulator. This does not test ARM64 QEMU execution. `ServerService` constructs and owns `GuestSessionController`, which calls the installer, process supervisor, readiness coordinator, persisted session policy, QMP shutdown request, and disk lease. The service also starts the event-driven battery monitor, publishes terminal serial input/output, updates foreground notifications, and keeps the runtime gate closed until ARM64 execution and guest boot evidence exists. JVM tests cover controller lifecycle and policy behavior; direct Android service lifecycle coverage remains a proof gap.
 
 ## Existing Android boundary tests
 
@@ -45,11 +45,11 @@ The APK asset install path has additionally been exercised on the Android x86_64
 
 ## First-run account validation
 
-The guest-boot CI job drives the hidden `passwd` prompts over QEMU serial using a random, ephemeral test password. The checker does not print the serial transcript or credential. It verifies the persistent account record, then boots again, logs in through the normal serial login, and confirms the shell runs as non-root. This host-side proof does not mean Android serial input is integrated; app setup remains blocked on the interactive terminal and service connection.
+The guest-boot CI job drives the hidden `passwd` prompts over QEMU serial using a random, ephemeral test password. The checker does not print the serial transcript or credential. It verifies the persistent account record, then boots again, logs in through the normal serial login, and confirms the shell runs as non-root. This host-side proof does not establish ARM64 Android guest boot or first-run completion on the Vivo; those remain blocked by the physical runtime validation gate.
 
 ## Runtime integration constraints
 
-The service must run in the dedicated `:vm` process as a foreground service while the guest is active; launch QEMU from the APK-extracted native-library directory; use app-private working storage and the persistent guest disk; keep serial and diagnostics separate; request graceful QMP shutdown before bounded force termination; and bind localhost forwarding to loopback by default.
+The service runs in the dedicated `:vm` process as a foreground service while the guest is active; launches QEMU from the APK-extracted native-library directory; uses app-private working storage and the persistent guest disk; keeps serial and diagnostics separate; requests graceful QMP shutdown before bounded force termination; and binds localhost forwarding to loopback by default. The activity and service already bridge terminal serial input/output. Completing first-run setup and login on the user's persistent disk, installing packages, and verifying Android-side localhost access still require the ARM64 runtime gate to open.
 
 The service may transition to RUNNING only after the first-run password prompt or serial login prompt is detected and the deadline is stored. The runtime gate remains closed until QEMU execution and guest boot pass on ARM64 Android. Low battery blocks startup and requests shutdown at or below 20%. ARM64 Android execution and secure guest login remain unverified, so service startup stays disabled.
 
@@ -61,9 +61,9 @@ CI publishes app and instrumentation APKs from the same commit, with build hashe
 
 ## Next proof gates
 
-1. Integrate installer, process supervisor, coordinator, battery monitor, and deadline store into foreground-service lifecycle tests.
-2. Run QEMU on ARM64 Android and boot the packaged Alpine guest.
-3. Bridge serial input/output, complete first-run password setup interactively, and verify login, package installation, and disk persistence.
-4. Verify QMP shutdown, timer cutoff, battery cutoff, and physical-device performance.
+1. Add direct Android foreground-service lifecycle coverage for startup rejection at the closed runtime gate, event delivery, and cleanup; JVM controller tests already cover process/session policy transitions.
+2. Run the instrumented QEMU guest-boot test on ARM64 Android and use stage, serial/stderr, and CPU-delta heartbeats to locate the current stall.
+3. After guest boot passes, use the app terminal to complete first-run password setup and login on the persistent disk, then verify package installation, disk persistence, and Android-side localhost access.
+4. Verify QMP shutdown, timer cutoff, battery cutoff, and physical-device performance on the Vivo.
 
 Until ARM64 execution and guest boot pass, PocketOS must describe Android Linux startup as unimplemented.
