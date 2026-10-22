@@ -159,7 +159,12 @@ jobs:
           keystore_certificate="$(keytool -exportcert -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | awk '{print $1}')"
           test -n "$app_certificate"
           test "$app_certificate" = "$test_certificate"
-          test "${app_certificate,,}" = "${keystore_certificate,,}"
+          if [[ "${app_certificate,,}" != "${keystore_certificate,,}" ]]; then
+            echo "APK signer does not match the persisted development keystore" >&2
+            echo "APK signer SHA-256: $app_certificate" >&2
+            echo "Keystore SHA-256: $keystore_certificate" >&2
+            exit 1
+          fi
           mkdir -p dist
           cp "$app_apk" dist/PocketOS-debug.apk
           cp "$test_apk" dist/PocketOS-androidTest.apk

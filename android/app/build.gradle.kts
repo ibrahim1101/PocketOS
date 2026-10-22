@@ -27,6 +27,21 @@ android {
         }
     }
 
+    signingConfigs {
+        create("pocketosDebug") {
+            storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("pocketosDebug")
+        }
+    }
+
     packaging {
         jniLibs {
             useLegacyPackaging = true
