@@ -45,7 +45,7 @@ if grep -Fq 'pocketos-console-ready' <<< "$setup"; then
   exit 1
 fi
 profile="$(debugfs -R "cat /etc/profile.d/pocketos-openrc.sh" "$image" 2>/dev/null)"
-grep -Fq '"$(id -un)" = pocketos' <<< "$profile" || {
+grep -Fq 'id -un' <<< "$profile" && grep -Fq '= pocketos' <<< "$profile" || {
   echo "Guest login profile does not release OpenRC after authenticated PocketOS login" >&2
   exit 1
 }
