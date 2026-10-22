@@ -42,6 +42,20 @@ class GuestSessionControllerTest {
     }
 
     @Test
+    fun stalledBootIsStoppedByIndependentDeadlineBeforeReadiness() {
+        val rig = Rig(bootTimeoutMs = 100)
+        assertTrue(rig.controller.start { rig.preparedGuest() })
+
+        awaitState(rig.controller, VmState.STOPPED)
+
+        assertEquals(GuestStopReason.BOOT_TIMEOUT, rig.controller.lastStopReason)
+        assertEquals(1, rig.gracefulShutdownRequests)
+        assertTrue("Stalled guest process survived its boot deadline", rig.launcher.process?.isAlive == false)
+        assertTrue("Boot timeout did not release its disk lease", rig.lease.closed)
+        assertNull(rig.store.checkpoint)
+    }
+
+    @Test
     fun deadlineRequestsGracefulShutdownBeforeReleasingDiskLease() {
         val rig = Rig()
         assertTrue(rig.controller.start { rig.preparedGuest() })
@@ -133,7 +147,11 @@ class GuestSessionControllerTest {
         assertEquals(expected, controller.state)
     }
 
-    private class Rig(initialBattery: Int = 80, private val gracefulShutdownCompletes: Boolean = true) {
+    private class Rig(
+        initialBattery: Int = 80,
+        private val gracefulShutdownCompletes: Boolean = true,
+        bootTimeoutMs: Long = GuestSessionController.DEFAULT_BOOT_TIMEOUT_MS,
+    ) {
         val lifecycle = VmLifecycle()
         val store = FakeStore()
         val clock = FakeClock(1_000)
@@ -151,6 +169,7 @@ class GuestSessionControllerTest {
             batteryPercent = { battery },
             gracefulShutdownTimeoutMs = 1,
             forceStopTimeoutMs = 1,
+            bootTimeoutMs = bootTimeoutMs,
         )
 
         fun preparedGuest() = PreparedGuest(

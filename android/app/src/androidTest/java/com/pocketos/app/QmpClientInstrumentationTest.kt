@@ -6,9 +6,12 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -96,6 +99,37 @@ class QmpClientInstrumentationTest {
             assertNull(serverFailure.get())
         } finally {
             server.close()
+        }
+    }
+
+    @Test
+    fun quitRequestHasCallerDeadlineWhenPeerStopsResponding() {
+        val socketName = "pocketos-qmp-stalled-${UUID.randomUUID()}"
+        val server = LocalServerSocket(socketName)
+        val accepted = CountDownLatch(1)
+        val releasePeer = CountDownLatch(1)
+        val serverThread = Thread {
+            runCatching {
+                server.accept().use {
+                    accepted.countDown()
+                    releasePeer.await(2, TimeUnit.SECONDS)
+                }
+            }
+        }.apply { isDaemon = true; start() }
+
+        try {
+            val startedAt = System.nanoTime()
+            val failure = runCatching {
+                QmpClient(LocalSocketAddress.Namespace.ABSTRACT).requestQuit(socketName, timeoutMillis = 200)
+            }.exceptionOrNull()
+            val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+            assertEquals(true, accepted.await(1, TimeUnit.SECONDS))
+            assertNotNull("Stalled QMP peer unexpectedly completed shutdown", failure)
+            assertTrue("QMP caller exceeded its bounded deadline: ${elapsedMs}ms", elapsedMs < 1_500)
+        } finally {
+            releasePeer.countDown()
+            server.close()
+            serverThread.join(1_000)
         }
     }
 }

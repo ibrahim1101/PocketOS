@@ -15,7 +15,7 @@ Updated: 2026-10-20
 
 ## Implemented and CI-verified
 
-- Foreground service owns GuestSessionController, QEMU process supervision, serial readiness, the 60-minute deadline, event-driven 20% battery cutoff, QMP shutdown request, bounded force-stop, disk lease, notifications, and shutdown status. Wi-Fi changes do not stop the guest.
+- Foreground service owns GuestSessionController, QEMU process supervision, a 180-second serial-readiness deadline, the 60-minute session deadline, event-driven 20% battery cutoff, bounded QMP shutdown, bounded force-stop, disk lease, notifications, and shutdown status. Wi-Fi changes do not stop the guest.
 - Dashboard start/stop controls, status refresh, serial terminal, guest RAM/vCPU/HTTP port settings, opt-in Wi-Fi LAN exposure, a persistent storage view, runtime diagnostics, and sanitized diagnostics export through Android's document picker. The export includes a bounded event history with enum-only event details; terminal contents, credentials, file paths, arbitrary error text, and network addresses are excluded.
 - Persistent storage screen reports raw guest image capacity, Android device free space, and ext4 guest filesystem free/used space. Guest filesystem metrics are read only while the exclusive disk lease is available; they are shown as unavailable while the VM is active.
 - User-selected ext4 disk export acquires the exclusive guest disk lease before opening the destination and copies the image byte for byte; Android unit tests verify it is blocked while a VM owns the disk.

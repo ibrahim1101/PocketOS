@@ -38,6 +38,7 @@ data class PreparedGuest(
 enum class GuestStopReason {
     USER_REQUEST,
     BATTERY_CUTOFF,
+    BOOT_TIMEOUT,
     TIME_LIMIT,
     UNEXPECTED_EXIT,
     START_FAILURE,
@@ -55,6 +56,7 @@ class GuestSessionController(
     private val batteryPercent: () -> Int,
     private val gracefulShutdownTimeoutMs: Long = DEFAULT_SHUTDOWN_TIMEOUT_MS,
     private val forceStopTimeoutMs: Long = DEFAULT_FORCE_STOP_TIMEOUT_MS,
+    private val bootTimeoutMs: Long = DEFAULT_BOOT_TIMEOUT_MS,
     private val onDiagnosticOutput: (ByteArray) -> Unit = {},
     private val onStateChanged: (VmState) -> Unit = {},
     private val onSerialOutput: (ByteArray) -> Unit = {},
@@ -63,6 +65,7 @@ class GuestSessionController(
     private var process: GuestProcess? = null
     private var activeGuest: PreparedGuest? = null
     private var deadlineTask: ScheduledSessionTask? = null
+    private var bootWatchdog: IndependentWatchdog? = null
     private var launching = false
     private val pendingSerial = mutableListOf<ByteArray>()
 
@@ -76,6 +79,7 @@ class GuestSessionController(
     init {
         require(gracefulShutdownTimeoutMs > 0)
         require(forceStopTimeoutMs > 0)
+        require(bootTimeoutMs > 0)
     }
 
     /** Prepare the disk and command, then launch once. A low battery rejects before preparation. */
@@ -103,6 +107,9 @@ class GuestSessionController(
                 onDiagnosticOutput = { bytes -> runCatching { onDiagnosticOutput(bytes) } },
             )
             process = startedProcess
+            bootWatchdog = IndependentWatchdog(bootTimeoutMs) {
+                stop(GuestStopReason.BOOT_TIMEOUT, onlyWhileBooting = true)
+            }
             launching = false
 
             val earlyOutput = pendingSerial.toList()
@@ -140,10 +147,11 @@ class GuestSessionController(
 
     fun stopByUser(): Boolean = stop(GuestStopReason.USER_REQUEST)
 
-    private fun stop(reason: GuestStopReason): Boolean {
+    private fun stop(reason: GuestStopReason, onlyWhileBooting: Boolean = false): Boolean {
         val currentProcess: GuestProcess?
         val guest: PreparedGuest?
         synchronized(lock) {
+            if (onlyWhileBooting && lifecycle.state != VmState.BOOTING) return false
             when (lifecycle.state) {
                 VmState.RUNNING -> {
                     if (!coordinator.requestShutdown()) return false
@@ -155,7 +163,14 @@ class GuestSessionController(
                 else -> return false
             }
             lastStopReason = reason
+            if (reason == GuestStopReason.BOOT_TIMEOUT) {
+                runCatching {
+                    onDiagnosticOutput("Guest boot deadline exceeded before serial readiness; stopping QEMU.\n".toByteArray())
+                }
+            }
             publishState()
+            bootWatchdog?.close()
+            bootWatchdog = null
             deadlineTask?.cancel()
             deadlineTask = null
             currentProcess = process
@@ -200,6 +215,8 @@ class GuestSessionController(
     private fun processSerialOutputLocked(bytes: ByteArray) {
         when (coordinator.onSerialOutput(bytes, readBatteryPercent())) {
             GuestBootEvent.READY -> {
+                bootWatchdog?.close()
+                bootWatchdog = null
                 val remaining = coordinator.remainingSessionMs()
                 if (remaining == null) {
                     lastStopReason = GuestStopReason.START_FAILURE
@@ -239,6 +256,8 @@ class GuestSessionController(
     private fun finishProcess(current: GuestProcess) {
         synchronized(lock) {
             if (process !== current) return
+            bootWatchdog?.close()
+            bootWatchdog = null
             deadlineTask?.cancel()
             deadlineTask = null
 
@@ -257,6 +276,8 @@ class GuestSessionController(
     private fun failStartLocked() {
         launching = false
         pendingSerial.clear()
+        bootWatchdog?.close()
+        bootWatchdog = null
         if (lifecycle.state != VmState.FAILED) lifecycle.transitionTo(VmState.FAILED)
         coordinator.clearSession()
         lastStopReason = GuestStopReason.START_FAILURE
@@ -279,5 +300,6 @@ class GuestSessionController(
     companion object {
         const val DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000L
         const val DEFAULT_FORCE_STOP_TIMEOUT_MS = 5_000L
+        const val DEFAULT_BOOT_TIMEOUT_MS = 180_000L
     }
 }
