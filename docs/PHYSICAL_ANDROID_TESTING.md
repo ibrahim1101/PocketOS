@@ -117,6 +117,8 @@ Review the files before sharing. Do not attach passwords, private keys, or an ex
 
 Host QEMU and Android x86_64 emulator runs do not establish physical ARM64 compatibility. The Vivo test is the first device-level proof. Report actual outputs and failures before enabling real PocketOS sessions.
 
+The CI Android x86_64 emulator runs the process-supervision, stream-cleanup, guest-asset, and QMP regression tests. It intentionally skips `packagedArm64QemuRunsOnAndroid` and `bootsFreshAlpineSetsPasswordLogsInPersistsAndQuitsThroughQmp` because they require an ARM64 Android runtime. A green emulator job is not evidence that either ARM64 runtime test executed.
+
 ## Storage management
 
 - Storage → Manage → Grow disk grows the raw image while stopped; ext4 expands on next boot.
