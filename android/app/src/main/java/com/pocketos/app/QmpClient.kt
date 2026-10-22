@@ -83,13 +83,14 @@ class QmpClient(
                 writer.write("{\"execute\":\"query-cpus-fast\"}\n")
                 writer.flush()
                 val cpuResponse = readCommandResponse(reader, "QMP query-cpus-fast")
-                val cpus = QMP_CPU_OBJECT.findAll(cpuResponse).mapNotNull { match ->
-                    val cpu = match.value
-                    val index = QMP_CPU_INDEX.find(cpu)?.groupValues?.get(1) ?: return@mapNotNull null
-                    val halted = QMP_CPU_HALTED.find(cpu)?.groupValues?.get(1) ?: "unknown"
-                    val threadId = QMP_CPU_THREAD.find(cpu)?.groupValues?.get(1) ?: "unknown"
-                    "$index:halted=$halted:threadId=$threadId"
-                }.take(MAX_REPORTED_CPUS).joinToString(prefix = "[", postfix = "]")
+                val cpuIndices = QMP_CPU_INDEX.findAll(cpuResponse).map { it.groupValues[1] }.toList()
+                val haltedStates = QMP_CPU_HALTED.findAll(cpuResponse).map { it.groupValues[1] }.toList()
+                val threadIds = QMP_CPU_THREAD.findAll(cpuResponse).map { it.groupValues[1] }.toList()
+                val cpus = cpuIndices.indices.take(MAX_REPORTED_CPUS).joinToString(prefix = "[", postfix = "]") { index ->
+                    val halted = haltedStates.getOrNull(index) ?: "unknown"
+                    val threadId = threadIds.getOrNull(index) ?: "unknown"
+                    "${cpuIndices[index]}:halted=$halted:threadId=$threadId"
+                }
                 "connected" + (status?.let { " status=$it" } ?: "") +
                     " vcpus=${if (cpus == "[]") "unavailable" else cpus}"
             }
@@ -112,7 +113,6 @@ class QmpClient(
 
     private companion object {
         val QMP_STATUS = Regex("\\\"status\\\"\\s*:\\s*\\\"([A-Za-z0-9_-]{1,32})\\\"")
-        val QMP_CPU_OBJECT = Regex("\\{[^{}]*\\}")
         val QMP_CPU_INDEX = Regex("\\\"cpu-index\\\"\\s*:\\s*(\\d+)")
         val QMP_CPU_HALTED = Regex("\\\"halted\\\"\\s*:\\s*(true|false)")
         val QMP_CPU_THREAD = Regex("\\\"thread-id\\\"\\s*:\\s*(\\d+)")
