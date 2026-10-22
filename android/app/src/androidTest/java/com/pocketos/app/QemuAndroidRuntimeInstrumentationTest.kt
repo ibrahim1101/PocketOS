@@ -111,28 +111,28 @@ class QemuAndroidRuntimeInstrumentationTest {
             reportStage("Creating an isolated copy of the Alpine seed disk")
             val firstLease = GuestDiskLease.acquire(disk)
             var firstProcess: NativeProcessHandle? = null
-            val console = SerialCapture(password, qmpSocket)
-            val stderr = BoundedDiagnosticCapture()
+            val firstConsole = SerialCapture(password, qmpSocket)
+            val firstStderr = BoundedDiagnosticCapture()
             try {
-                firstProcess = startGuest(context, installed, disk, qmpSocket, console, stderr)
-                awaitStage("Waiting for the first-run password prompt", "New password:", console, firstProcess, stderr, GUEST_BOOT_TIMEOUT_MS)
-                assertTrue("Guest readiness probe did not recognize first-run readiness", console.probe.isReady)
+                firstProcess = startGuest(context, installed, disk, qmpSocket, firstConsole, firstStderr)
+                awaitStage("Waiting for the first-run password prompt", "New password:", firstConsole, firstProcess, firstStderr, GUEST_BOOT_TIMEOUT_MS)
+                assertTrue("Guest readiness probe did not recognize first-run readiness", firstConsole.probe.isReady)
                 reportStage("Submitting an ephemeral password to the isolated guest disk")
                 firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
-                awaitStage("Waiting for password confirmation", "Retype password:", console, firstProcess, stderr, PROMPT_TIMEOUT_MS)
+                awaitStage("Waiting for password confirmation", "Retype password:", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
                 firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
-                awaitStage("Waiting for first-run setup completion", "POCKETOS_FIRST_BOOT_COMPLETE", console, firstProcess, stderr, PROMPT_TIMEOUT_MS)
-                awaitStage("Waiting for the non-root login prompt", "pocketos login:", console, firstProcess, stderr, PROMPT_TIMEOUT_MS)
+                awaitStage("Waiting for first-run setup completion", "POCKETOS_FIRST_BOOT_COMPLETE", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
+                awaitStage("Waiting for the non-root login prompt", "pocketos login:", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
 
                 reportStage("Logging in as pocketos and checking account and disk marker")
                 firstProcess.writeSerial("pocketos\n".toByteArray(Charsets.UTF_8))
-                awaitStage("Waiting for the account password prompt", "Password:", console, firstProcess, stderr, PROMPT_TIMEOUT_MS)
+                awaitStage("Waiting for the account password prompt", "Password:", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
                 firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
-                awaitStage("Waiting for the account shell", "$ ", console, firstProcess, stderr, PROMPT_TIMEOUT_MS)
-                verifyGuestAccountAndPersistentMarker(console, firstProcess, stderr)
-                gracefulQmpShutdown(firstProcess, qmpSocket, console, stderr)
+                awaitStage("Waiting for the account shell", "$ ", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
+                verifyGuestAccountAndPersistentMarker(firstConsole, firstProcess, firstStderr)
+                gracefulQmpShutdown(firstProcess, qmpSocket, firstConsole, firstStderr)
             } finally {
-                stopIfStillRunning("first boot", firstProcess, console, stderr)
+                stopIfStillRunning("first boot", firstProcess, firstConsole, firstStderr)
                 runCatching { firstLease.close() }
                 runCatching { qmpSocket.delete() }
             }
@@ -140,21 +140,21 @@ class QemuAndroidRuntimeInstrumentationTest {
             reportStage("Rebooting the isolated disk to verify persisted credentials and marker")
             val secondLease = GuestDiskLease.acquire(disk)
             var secondProcess: NativeProcessHandle? = null
-            val console = SerialCapture(password, qmpSocket)
-            val stderr = BoundedDiagnosticCapture()
+            val secondConsole = SerialCapture(password, qmpSocket)
+            val secondStderr = BoundedDiagnosticCapture()
             try {
-                secondProcess = startGuest(context, installed, disk, qmpSocket, console, stderr)
-                awaitStage("Waiting for login after restart", "pocketos login:", console, secondProcess, stderr, GUEST_BOOT_TIMEOUT_MS)
-                assertTrue("Readiness probe did not recognize login readiness", console.probe.isReady)
+                secondProcess = startGuest(context, installed, disk, qmpSocket, secondConsole, secondStderr)
+                awaitStage("Waiting for login after restart", "pocketos login:", secondConsole, secondProcess, secondStderr, GUEST_BOOT_TIMEOUT_MS)
+                assertTrue("Readiness probe did not recognize login readiness", secondConsole.probe.isReady)
 
                 secondProcess.writeSerial("pocketos\n".toByteArray(Charsets.UTF_8))
-                awaitStage("Waiting for the persisted account password prompt", "Password:", console, secondProcess, stderr, PROMPT_TIMEOUT_MS)
+                awaitStage("Waiting for the persisted account password prompt", "Password:", secondConsole, secondProcess, secondStderr, PROMPT_TIMEOUT_MS)
                 secondProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
-                awaitStage("Waiting for the persisted account shell", "$ ", console, secondProcess, stderr, PROMPT_TIMEOUT_MS)
-                verifyGuestAccountAndPersistentMarker(console, secondProcess, stderr)
-                gracefulQmpShutdown(secondProcess, qmpSocket, console, stderr)
+                awaitStage("Waiting for the persisted account shell", "$ ", secondConsole, secondProcess, secondStderr, PROMPT_TIMEOUT_MS)
+                verifyGuestAccountAndPersistentMarker(secondConsole, secondProcess, secondStderr)
+                gracefulQmpShutdown(secondProcess, qmpSocket, secondConsole, secondStderr)
             } finally {
-                stopIfStillRunning("second boot", secondProcess, console, stderr)
+                stopIfStillRunning("second boot", secondProcess, secondConsole, secondStderr)
                 runCatching { secondLease.close() }
                 runCatching { qmpSocket.delete() }
             }

@@ -52,6 +52,7 @@ class GuestSessionControllerTest {
         task.run()
 
         assertEquals(1, rig.gracefulShutdownRequests)
+        assertEquals(1, rig.launcher.process?.expectOutputClosureCount)
         assertEquals(VmState.STOPPED, rig.controller.state)
         assertEquals(GuestStopReason.TIME_LIMIT, rig.controller.lastStopReason)
         assertNull(rig.store.checkpoint)
@@ -120,6 +121,7 @@ class GuestSessionControllerTest {
         assertTrue(rig.controller.stopByUser())
 
         assertEquals(1, rig.gracefulShutdownRequests)
+        assertEquals(1, rig.launcher.process?.expectOutputClosureCount)
         assertEquals(1, rig.launcher.process?.forceStopCount)
         assertEquals(VmState.STOPPED, rig.controller.state)
         assertTrue(rig.lease.closed)
@@ -191,6 +193,11 @@ class GuestSessionControllerTest {
 
         override fun writeSerial(bytes: ByteArray) {
             check(running)
+        }
+
+        var expectOutputClosureCount = 0
+        override fun expectOutputClosure() {
+            expectOutputClosureCount += 1
         }
 
         override fun awaitExit(timeout: Long, unit: TimeUnit): Boolean {

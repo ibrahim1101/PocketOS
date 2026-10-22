@@ -7,6 +7,7 @@ interface GuestProcess {
     val isAlive: Boolean
     fun writeSerial(bytes: ByteArray)
     fun awaitExit(timeout: Long, unit: TimeUnit): Boolean
+    fun expectOutputClosure() {}
     fun forceStop(timeout: Long = 5, unit: TimeUnit = TimeUnit.SECONDS): Boolean
 }
 
@@ -167,6 +168,7 @@ class GuestSessionController(
         }
 
         val processToStop = currentProcess ?: return true
+        processToStop.expectOutputClosure()
         try {
             guest?.requestGracefulShutdown?.invoke()
         } catch (_: Exception) {

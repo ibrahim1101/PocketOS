@@ -125,11 +125,15 @@ class NativeProcessHandle internal constructor(
 
     /** Last-resort process termination; callers should request QEMU shutdown first. */
     override fun forceStop(timeout: Long, unit: TimeUnit): Boolean {
-        pumpState.expectedClosure.set(true)
+        expectOutputClosure()
         if (process.isAlive) {
             process.destroyForcibly()
         }
         return process.waitFor(timeout, unit)
+    }
+
+    override fun expectOutputClosure() {
+        pumpState.expectedClosure.set(true)
     }
 
     internal fun awaitOutputPumps(timeout: Long, unit: TimeUnit): Boolean = outputPumps.await(timeout, unit)
