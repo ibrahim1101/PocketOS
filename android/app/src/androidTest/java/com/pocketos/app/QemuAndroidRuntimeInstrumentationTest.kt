@@ -181,7 +181,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             val firstConsole = SerialCapture(password, qmpSocket)
             val firstStderr = BoundedDiagnosticCapture()
             try {
-                firstProcess = startGuest(context, installed, disk, qmpSocket, firstConsole, firstStderr, activeProcesses)
+                firstProcess = startGuest(context, installed, disk, qmpSocket, firstConsole, firstStderr, activeProcesses, watchdog)
                 awaitStage("Waiting for the first-run password prompt", "New password:", firstConsole, firstProcess, firstStderr, GUEST_BOOT_TIMEOUT_MS)
                 assertTrue("Guest readiness probe did not recognize first-run readiness", firstConsole.probe.isReady)
                 reportStage("Submitting an ephemeral password to the isolated guest disk")
@@ -210,7 +210,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             val secondConsole = SerialCapture(password, qmpSocket)
             val secondStderr = BoundedDiagnosticCapture()
             try {
-                secondProcess = startGuest(context, installed, disk, qmpSocket, secondConsole, secondStderr, activeProcesses)
+                secondProcess = startGuest(context, installed, disk, qmpSocket, secondConsole, secondStderr, activeProcesses, watchdog)
                 awaitStage("Waiting for login after restart", "pocketos login:", secondConsole, secondProcess, secondStderr, GUEST_BOOT_TIMEOUT_MS)
                 assertTrue("Readiness probe did not recognize login readiness", secondConsole.probe.isReady)
 
@@ -271,6 +271,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         console: SerialCapture,
         stderr: BoundedDiagnosticCapture,
         activeProcesses: MutableList<ActiveQemu>,
+        watchdog: IndependentWatchdog,
     ): NativeProcessHandle {
         qmpSocket.delete()
         val launch = QemuLaunchConfig(
@@ -287,7 +288,15 @@ class QemuAndroidRuntimeInstrumentationTest {
         return NativeProcessSupervisor().startSupervised(
             command = launch.toCommand(),
             workingDirectory = context.filesDir,
-            onProcessStarted = { process -> activeProcesses += ActiveQemu(process, console, stderr) },
+            onProcessStarted = { process ->
+                activeProcesses += ActiveQemu(process, console, stderr)
+                if (watchdog.hasFired) {
+                    val snapshot = runCatching { diagnosticSummary(process, console, stderr) }
+                        .getOrElse { "exitStatus=${process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
+                    Log.e(TAG, "QEMU registered after the independent test deadline; pre-stop $snapshot")
+                    runCatching { process.forceStop(CLEANUP_TIMEOUT_SECONDS, TimeUnit.SECONDS) }
+                }
+            },
             onSerialOutput = console::receive,
             onDiagnosticOutput = stderr::append,
         )
