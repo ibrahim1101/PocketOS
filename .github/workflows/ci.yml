@@ -168,7 +168,13 @@ jobs:
           mkdir -p dist
           cp "$app_apk" dist/PocketOS-debug.apk
           cp "$test_apk" dist/PocketOS-androidTest.apk
-          printf 'commit=%s\nsigning-certificate-sha256=%s\n' '${{ github.event.pull_request.head.sha || github.sha }}' "$app_certificate" > dist/build-info.txt
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            signing_kind="ephemeral-pull-request-debug"
+          else
+            signing_kind="cached-branch-debug"
+          fi
+          printf 'commit=%s\nsigning-kind=%s\nsigning-certificate-sha256=%s\n' \
+            '${{ github.event.pull_request.head.sha || github.sha }}' "$signing_kind" "$app_certificate" > dist/build-info.txt
           sha256sum dist/PocketOS-debug.apk dist/PocketOS-androidTest.apk > dist/SHA256SUMS
       - name: Verify packaged native library ABI and dependencies
         run: |
@@ -182,7 +188,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: pocketos-android-apk-${{ github.event.pull_request.head.sha || github.sha }}
+          name: pocketos-android-apk-${{ github.event.pull_request.head.sha || github.sha }}${{ github.event_name == 'pull_request' && '-pull-request' || '' }}
           path: dist/PocketOS-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -190,7 +196,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: pocketos-instrumentation-apk-${{ github.event.pull_request.head.sha || github.sha }}
+          name: pocketos-instrumentation-apk-${{ github.event.pull_request.head.sha || github.sha }}${{ github.event_name == 'pull_request' && '-pull-request' || '' }}
           path: dist/PocketOS-androidTest.apk
           if-no-files-found: error
           retention-days: 14
@@ -198,7 +204,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pocketos-test-handoff-${{ github.event.pull_request.head.sha || github.sha }}
+          name: pocketos-test-handoff-${{ github.event.pull_request.head.sha || github.sha }}${{ github.event_name == 'pull_request' && '-pull-request' || '' }}
           path: |
             dist/build-info.txt
             dist/SHA256SUMS

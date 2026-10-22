@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -21,11 +22,20 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.GZIPInputStream
 
 @RunWith(AndroidJUnit4::class)
 class QemuAndroidRuntimeInstrumentationTest {
+    @Volatile
+    private var activeJournal: RuntimeTestJournal? = null
+
+    @Volatile
+    private var activeStage: String = "not-started"
+
     @Test
     fun failedGuestBootTimesOutWithDiagnosticsAndCleanupPreservesFailure() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -68,9 +78,10 @@ class QemuAndroidRuntimeInstrumentationTest {
         val owner = Thread.currentThread()
         val released = CountDownLatch(1)
         val watchdog = IndependentWatchdog(250) {
-            Log.e(TAG, "watchdog regression pre-stop ${process.diagnosticSnapshot()}")
+            process.expectOutputClosure()
             process.forceStop(2, TimeUnit.SECONDS)
             owner.interrupt()
+            Log.e(TAG, "watchdog regression stoppedProcess=${!process.isAlive}")
         }
         var interrupted = false
         try {
@@ -87,6 +98,159 @@ class QemuAndroidRuntimeInstrumentationTest {
             Thread.interrupted()
             if (process.isAlive) process.forceStop(2, TimeUnit.SECONDS)
             process.awaitOutputPumps(2, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    fun watchdogKillsGuestBeforePotentiallyBlockedDiagnosticCollection() {
+        val process = NativeProcessSupervisor().start(
+            command = listOf("/system/bin/sh", "-c", "exec sleep 30"),
+        )
+        val diagnosticsStarted = CountDownLatch(1)
+        val releaseDiagnostics = CountDownLatch(1)
+        val processStopped = CountDownLatch(1)
+        val watchdog = IndependentWatchdog(250) {
+            // The real timeout path must terminate first; a blocked snapshot or QMP probe
+            // must not get a chance to keep the guest alive.
+            process.expectOutputClosure()
+            process.forceStop(2, TimeUnit.SECONDS)
+            processStopped.countDown()
+            diagnosticsStarted.countDown()
+            releaseDiagnostics.await(10, TimeUnit.SECONDS)
+        }
+        try {
+            assertTrue("Watchdog did not reach diagnostic collection", diagnosticsStarted.await(3, TimeUnit.SECONDS))
+            assertTrue("Watchdog callback did not stop the guest before diagnostics", processStopped.count == 0L)
+            assertFalse("Stalled guest survived while diagnostics were blocked", process.isAlive)
+        } finally {
+            releaseDiagnostics.countDown()
+            watchdog.close()
+            if (process.isAlive) process.forceStop(2, TimeUnit.SECONDS)
+            process.awaitOutputPumps(2, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    fun slowWatchdogCallbackDoesNotBlockOtherDeadlineDispatch() {
+        val slowStarted = CountDownLatch(1)
+        val releaseSlow = CountDownLatch(1)
+        val fastFired = CountDownLatch(1)
+        val slow = IndependentWatchdog(100) {
+            slowStarted.countDown()
+            releaseSlow.await(3, TimeUnit.SECONDS)
+        }
+        val fast = IndependentWatchdog(250) { fastFired.countDown() }
+        try {
+            assertTrue("First watchdog callback did not start", slowStarted.await(2, TimeUnit.SECONDS))
+            assertTrue("A blocked callback delayed another deadline", fastFired.await(2, TimeUnit.SECONDS))
+        } finally {
+            releaseSlow.countDown()
+            slow.close()
+            fast.close()
+        }
+    }
+
+    @Test
+    fun runtimeTestJournalPersistsTimestampsAndRedactsSecretsAndPrivatePaths() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val runId = "journal-${UUID.randomUUID()}"
+        val journal = RuntimeTestJournal(context, runId)
+        try {
+            journal.record("stage", "password=not-for-logs path=${context.filesDir.absolutePath}/guest.img")
+            val contents = journal.file.readText(Charsets.UTF_8)
+            assertTrue("Journal has no timestamp", contents.contains(Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z")))
+            assertTrue("Journal did not redact the password", contents.contains("password=[REDACTED]"))
+            assertFalse("Journal exposed a private app path", contents.contains(context.filesDir.absolutePath))
+            assertTrue("Journal did not persist the stage", contents.contains("<app-private>/guest.img"))
+        } finally {
+            journal.file.delete()
+        }
+    }
+
+    @Test(timeout = REAL_QEMU_STALL_TEST_CEILING_MS)
+    fun packagedAlpineQemuIsStoppedWhenInstrumentationWaitIsBlocked() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assumeArm64(context)
+        assumeTrue("At least 600 MiB free app storage is needed for the isolated guest disk", context.filesDir.usableSpace >= MIN_TEST_STORAGE_BYTES)
+        val id = UUID.randomUUID().toString().replace("-", "")
+        val journal = RuntimeTestJournal(context, "stall-$id")
+        val installed = GuestAssetInstaller.forContext(context).install()
+        val disk = freshValidationDisk(context, "stall-$id")
+        val qmpSocket = File(context.filesDir, "qmp-stall-$id.sock")
+        val console = SerialCapture("ephemeral-stall-secret", qmpSocket)
+        val stderr = BoundedDiagnosticCapture()
+        val process = AtomicReference<NativeProcessHandle?>()
+        val aliveAtDeadline = AtomicReference<Boolean?>(null)
+        val processStopped = CountDownLatch(1)
+        val owner = Thread.currentThread()
+        val watchdog = IndependentWatchdog(REAL_QEMU_STALL_TIMEOUT_MS) {
+            val active = process.get()
+            aliveAtDeadline.set(active?.isAlive)
+            if (active != null) {
+                runCatching { active.expectOutputClosure() }
+                runCatching { active.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS) }
+            }
+            processStopped.countDown()
+            owner.interrupt()
+            val snapshot = active?.let { diagnosticSummary(it, console, stderr) } ?: "qemu=not-registered"
+            journal.record("startup-watchdog", "fired=${active != null} $snapshot")
+        }
+        val heartbeat = IndependentHeartbeat(REAL_QEMU_STALL_HEARTBEAT_MS) {
+            val active = process.get()
+            journal.record(
+                "startup-heartbeat",
+                active?.let { diagnosticSummary(it, console, stderr) } ?: "qemu=not-registered",
+            )
+        }
+        try {
+            val launch = QemuLaunchConfig(
+                executable = packagedQemu(context),
+                kernel = installed.kernel,
+                initramfs = installed.initramfs,
+                rootDisk = disk,
+                qmpSocket = qmpSocket,
+                memoryMiB = 512,
+                vcpus = 1,
+                hostHttpPort = (40_000..59_999).random(),
+            )
+            journal.record("startup-launch", launch.diagnosticSummary())
+            val handle = NativeProcessSupervisor().startSupervised(
+                command = launch.toCommand(),
+                workingDirectory = context.filesDir,
+                onProcessStarted = { child ->
+                    process.set(child)
+                    if (watchdog.hasFired) {
+                        child.expectOutputClosure()
+                        child.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                        processStopped.countDown()
+                    }
+                },
+                onSerialOutput = console::receive,
+                onDiagnosticOutput = stderr::append,
+            )
+            process.set(handle)
+            val timedOut = try {
+                processStopped.await(REAL_QEMU_STALL_TEST_CEILING_MS, TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) {
+                true
+            }
+            assertTrue("Real packaged QEMU did not hit its independent deadline", watchdog.hasFired)
+            assertTrue("Real QEMU process was not stopped by the deadline", timedOut)
+            assertEquals("Packaged QEMU exited before the watchdog exercised forced cleanup", true, aliveAtDeadline.get())
+            assertFalse("Real packaged QEMU remained alive after watchdog cleanup", handle.isAlive)
+            assertTrue("QEMU output pumps remained blocked after process termination", handle.awaitOutputPumps(3, TimeUnit.SECONDS))
+        } finally {
+            heartbeat.close()
+            watchdog.close()
+            Thread.interrupted()
+            process.get()?.let { handle ->
+                if (handle.isAlive) handle.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                handle.awaitOutputPumps(3, TimeUnit.SECONDS)
+            }
+            journal.record("startup-test-finished", "qemuAlive=${process.get()?.isAlive ?: false}")
+            disk.delete()
+            File(context.cacheDir, "pocketos-seed-stall-$id.gzip").delete()
+            qmpSocket.delete()
         }
     }
 
@@ -144,8 +308,75 @@ class QemuAndroidRuntimeInstrumentationTest {
 
     @Test(timeout = MAX_GUEST_TEST_DURATION_MS)
     fun bootsFreshAlpineSetsPasswordLogsInPersistsAndQuitsThroughQmp() {
-        reportStage("Checking ARM64 runtime and available app storage")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val validationId = UUID.randomUUID().toString().replace("-", "")
+        val activeProcesses = Collections.synchronizedList(mutableListOf<ActiveQemu>())
+        val testThread = Thread.currentThread()
+        val journal = RuntimeTestJournal(context, validationId)
+        activeJournal = journal
+        activeStage = "Initializing independent test watchdog"
+        val watchdog = IndependentWatchdog(TEST_WATCHDOG_TIMEOUT_MS) {
+            val active = synchronized(activeProcesses) { activeProcesses.toList() }
+            var stopped = 0
+            // Release a blocked wait immediately; the watchdog worker continues cleanup
+            // independently even if the instrumentation thread starts unwinding.
+            testThread.interrupt()
+            // Terminate first. Diagnostics have their own worker and can never hold the
+            // watchdog's kill path hostage if procfs or a QMP socket stops responding.
+            active.forEach { guest ->
+                runCatching { guest.process.expectOutputClosure() }
+                if (runCatching { guest.process.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS) }.getOrDefault(false)) {
+                    stopped += 1
+                }
+            }
+            val failedStage = activeStage
+            Thread({
+                val finalState = active.joinToString(" || ") { guest ->
+                    runCatching { diagnosticSummary(guest.process, guest.console, guest.stderr) }
+                        .getOrElse { "exitStatus=${guest.process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
+                }.ifEmpty { "no-qemu-process-registered" }
+                journal.record("watchdog-timeout", "stage=$failedStage killed=$stopped/${active.size} $finalState")
+                Log.e(TAG, "independent test deadline exceeded; stage=$failedStage killed=$stopped/${active.size} $finalState")
+            }, "pocketos-timeout-diagnostics").apply {
+                isDaemon = true
+                start()
+            }
+            Log.e(TAG, "independent test deadline exceeded; stage=$failedStage killed=$stopped/${active.size}; test interrupted")
+        }
+        journal.record("test-start", "runId=$validationId timeoutMs=$TEST_WATCHDOG_TIMEOUT_MS")
+        val heartbeat = IndependentHeartbeat(HEARTBEAT_INTERVAL_MS) {
+            val active = synchronized(activeProcesses) { activeProcesses.toList() }
+            if (active.isEmpty()) {
+                journal.record("heartbeat", "stage=$activeStage qemu=not-yet-started")
+            } else {
+                active.forEach { guest ->
+                    val snapshot = runCatching {
+                        diagnosticSummary(guest.process, guest.console, guest.stderr)
+                    }.getOrElse { "exitStatus=${guest.process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
+                    journal.record("heartbeat", "stage=$activeStage $snapshot")
+                    Log.i(TAG, "independent heartbeat stage=$activeStage $snapshot")
+                }
+            }
+        }
+
+        try {
+            runFullGuestBoot(context, validationId, activeProcesses, watchdog)
+        } finally {
+            heartbeat.close()
+            watchdog.close()
+            journal.record("test-finished", "stage=$activeStage")
+            activeJournal = null
+            activeStage = "not-running"
+        }
+    }
+
+    private fun runFullGuestBoot(
+        context: Context,
+        validationId: String,
+        activeProcesses: MutableList<ActiveQemu>,
+        watchdog: IndependentWatchdog,
+    ) {
+        reportStage("Checking ARM64 runtime and available app storage")
         assumeArm64(context)
         assumeTrue(
             "At least 600 MiB free app storage is needed for the seed and isolated test disk",
@@ -155,25 +386,9 @@ class QemuAndroidRuntimeInstrumentationTest {
         reportStage("Installing and verifying packaged guest assets")
         val installed = GuestAssetInstaller.forContext(context).install()
         assertTrue("App-private persistent disk was not initialized as ext4", isExt4(installed.rootDisk))
-        val validationId = UUID.randomUUID().toString().replace("-", "")
         val disk = freshValidationDisk(context, validationId)
         val qmpSocket = File(context.filesDir, "qmp-v-$validationId.sock")
         val password = UUID.randomUUID().toString().replace("-", "").take(18)
-        val activeProcesses = Collections.synchronizedList(mutableListOf<ActiveQemu>())
-        val testThread = Thread.currentThread()
-        val watchdog = IndependentWatchdog(TEST_WATCHDOG_TIMEOUT_MS) {
-            val active = synchronized(activeProcesses) { activeProcesses.toList() }
-            active.forEach { guest ->
-                val process = guest.process
-                val snapshot = runCatching { diagnosticSummary(process, guest.console, guest.stderr) }
-                    .getOrElse { "exitStatus=${process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
-                Log.e(TAG, "independent test deadline exceeded; pre-stop $snapshot")
-                runCatching { process.forceStop(CLEANUP_TIMEOUT_SECONDS, TimeUnit.SECONDS) }
-            }
-            Log.e(TAG, "independent test deadline exceeded; terminating blocked instrumentation wait")
-            testThread.interrupt()
-        }
-
         try {
             reportStage("Creating an isolated copy of the Alpine seed disk")
             val firstLease = GuestDiskLease.acquire(disk)
@@ -226,7 +441,6 @@ class QemuAndroidRuntimeInstrumentationTest {
                 runCatching { qmpSocket.delete() }
             }
         } finally {
-            watchdog.close()
             runCatching { disk.delete() }
             runCatching { File(context.cacheDir, "pocketos-seed-$validationId.gzip").delete() }
         }
@@ -284,6 +498,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             vcpus = 1,
             hostHttpPort = (40_000..59_999).random(),
         )
+        activeJournal?.record("qemu-launch", launch.diagnosticSummary())
         Log.i(TAG, "qemu launch ${launch.diagnosticSummary()}")
         return NativeProcessSupervisor().startSupervised(
             command = launch.toCommand(),
@@ -291,10 +506,14 @@ class QemuAndroidRuntimeInstrumentationTest {
             onProcessStarted = { process ->
                 activeProcesses += ActiveQemu(process, console, stderr)
                 if (watchdog.hasFired) {
+                    runCatching { process.expectOutputClosure() }
+                    val stopped = runCatching {
+                        process.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    }.getOrDefault(false)
                     val snapshot = runCatching { diagnosticSummary(process, console, stderr) }
                         .getOrElse { "exitStatus=${process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
-                    Log.e(TAG, "QEMU registered after the independent test deadline; pre-stop $snapshot")
-                    runCatching { process.forceStop(CLEANUP_TIMEOUT_SECONDS, TimeUnit.SECONDS) }
+                    activeJournal?.record("late-qemu-registration", "stopped=$stopped $snapshot")
+                    Log.e(TAG, "QEMU registered after the independent test deadline; stopped=$stopped $snapshot")
                 }
             },
             onSerialOutput = console::receive,
@@ -438,6 +657,26 @@ class QemuAndroidRuntimeInstrumentationTest {
         console: SerialCapture,
         stderr: BoundedDiagnosticCapture,
     ): String {
+        val task = FutureTask { collectDiagnosticSummary(process, console, stderr) }
+        Thread(task, "pocketos-diagnostic-snapshot").apply {
+            isDaemon = true
+            start()
+        }
+        return try {
+            task.get(DIAGNOSTIC_SNAPSHOT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        } catch (_: TimeoutException) {
+            task.cancel(true)
+            "exitStatus=${process.exitStatusLabel()}; diagnosticsUnavailable(snapshot-timeout)"
+        } catch (failure: Exception) {
+            "exitStatus=${process.exitStatusLabel()}; diagnosticsUnavailable(${failure.javaClass.simpleName})"
+        }
+    }
+
+    private fun collectDiagnosticSummary(
+        process: NativeProcessHandle,
+        console: SerialCapture,
+        stderr: BoundedDiagnosticCapture,
+    ): String {
         val processState = runCatching { process.diagnosticSnapshot() }
             .getOrElse { "qemuProcfs=unavailable(${it.javaClass.simpleName})" }
             .take(MAX_PROCESS_SNAPSHOT_CHARS)
@@ -479,6 +718,8 @@ class QemuAndroidRuntimeInstrumentationTest {
     }
 
     private fun reportStage(stage: String) {
+        activeStage = stage
+        activeJournal?.record("stage", stage)
         Log.i(TAG, "stage=$stage")
         InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
             putString("pocketos.stage", stage)
@@ -499,6 +740,11 @@ class QemuAndroidRuntimeInstrumentationTest {
         private const val MAX_FAILURE_TAIL_CHARS = 2_048
         private const val MAX_PROCESS_SNAPSHOT_CHARS = 4_096
         private const val CLEANUP_TIMEOUT_SECONDS = 10L
+        private const val WATCHDOG_KILL_TIMEOUT_SECONDS = 2L
+        private const val DIAGNOSTIC_SNAPSHOT_TIMEOUT_MS = 2_000L
         private const val HEARTBEAT_INTERVAL_MS = 15_000L
+        private const val REAL_QEMU_STALL_TIMEOUT_MS = 5_000L
+        private const val REAL_QEMU_STALL_HEARTBEAT_MS = 1_000L
+        private const val REAL_QEMU_STALL_TEST_CEILING_MS = 20_000L
     }
 }

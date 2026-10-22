@@ -23,7 +23,7 @@ Get-Content (Join-Path $ArtifactDir "dist\build-info.txt")
 Get-Content (Join-Path $ArtifactDir "dist\SHA256SUMS")
 ```
 
-The workflow must show success before treating the APKs as a validated handoff. Check that build-info.txt contains the same commit SHA used in the artifact names.
+The workflow must show success before treating the APKs as a validated handoff. Check that build-info.txt contains the same commit SHA used in the artifact names. Use a successful **push** run from `feat/m1-linux-boot` for installable development updates. Pull-request runs use a disposable key and their artifact names end in `-pull-request`; those APKs cannot update an install signed by the branch key. The mismatch reported for the earlier test run came from installing a pull-request-signed artifact after a branch-signed build. The workflow now identifies the signing kind in build-info.txt and labels pull-request artifacts explicitly.
 
 Trusted pushes to `feat/m1-linux-boot` reuse one development debug signing key from the GitHub Actions cache. Pull-request builds intentionally use an isolated temporary key. CI records the certificate SHA-256 in build-info.txt and verifies that the app and instrumentation APKs share that certificate. If the installed APK came from an older or pull-request build with a different key, uninstall it once before switching to trusted branch artifacts; later trusted branch builds can be installed over it with `adb install -r`. The instrumentation APK must also come from the same workflow run as the app APK. This is a development signing identity, not a release key. GitHub may evict inactive caches, so compare the recorded fingerprint when upgrading; a changed fingerprint requires uninstalling the old app first.
 
@@ -48,7 +48,7 @@ If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the installed PocketOS 
 
 Expected ABI: arm64-v8a. Android 16 may report release 16 or API level 36.
 
-Verify the runner is installed, then run the ARM64 QEMU executable check and full guest workflow independently. The guest test has an 8-minute independent watchdog plus a 12-minute JUnit ceiling. The watchdog runs on a daemon worker, captures diagnostics, force-stops every tracked QEMU process, and interrupts a blocked instrumentation wait. The production guest controller also stops a session that does not reach serial readiness within 180 seconds. QMP quit and probe calls have caller-side deadlines that include local socket connection time. The test logs each stage and sanitized launch configuration, emits a 15-second heartbeat while waiting for guest serial output, and captures QEMU thread state, per-thread cumulative CPU ticks and deltas, wait channels, stdout/stderr tails, exit status, QMP VM status, and `query-cpus-fast` vCPU thread IDs/halted state before cleanup. Procfs fields are best effort; Android may restrict wait-channel names (the Vivo snapshot returned `0`). The launch summary redacts app-private filesystem paths and never includes the ephemeral test password. The test uses an isolated temporary guest disk and never changes the user's persistent guest disk.
+Verify the runner is installed, then run the ARM64 QEMU executable check and full guest workflow independently. The guest test has an 8-minute independent watchdog plus a 12-minute JUnit ceiling. The watchdog kills registered QEMU processes before diagnostic collection and interrupts a blocked instrumentation wait; late-registered children are stopped immediately. Independent 15-second health snapshots are written to a timestamped bounded file under app-private `files/diagnostics/`, so they survive instrumentation termination. The production guest controller also stops a session that does not reach serial readiness within 180 seconds. QMP quit and probe calls have caller-side deadlines that include local socket connection time. Diagnostics include sanitized launch configuration, QEMU thread state, per-thread cumulative CPU ticks and deltas, wait channels, stdout/stderr tails, exit status, QMP VM status, and `query-cpus-fast` vCPU thread IDs/halted state. Procfs fields are best effort; Android may restrict wait-channel names (the previous Vivo snapshot returned `0`). The launch summary and journal redact app-private paths and the ephemeral test password. The test uses an isolated temporary guest disk and never changes the user's persistent guest disk.
 
 ```powershell
 $ResultsDir = Join-Path $ArtifactDir "device-results"
@@ -63,6 +63,15 @@ $NativeText = ($NativeOutput -join [Environment]::NewLine) -replace '(?im)(passw
 $NativeText | Set-Content -Encoding utf8 (Join-Path $ResultsDir "qemu-native-test.txt")
 $NativeText
 "Native test exit code: $NativeExitCode"
+
+$SupervisionOutput = & $Adb -s $Serial shell am instrument -w -r `
+  -e class 'com.pocketos.app.QemuAndroidRuntimeInstrumentationTest#packagedAlpineQemuIsStoppedWhenInstrumentationWaitIsBlocked' `
+  com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner 2>&1
+$SupervisionExitCode = $LASTEXITCODE
+$SupervisionText = ($SupervisionOutput -join [Environment]::NewLine) -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
+$SupervisionText | Set-Content -Encoding utf8 (Join-Path $ResultsDir "qemu-supervision-test.txt")
+$SupervisionText
+"Supervision test exit code: $SupervisionExitCode"
 
 $GuestOutput = & $Adb -s $Serial shell am instrument -w -r `
   -e class 'com.pocketos.app.QemuAndroidRuntimeInstrumentationTest#bootsFreshAlpineSetsPasswordLogsInPersistsAndQuitsThroughQmp' `
@@ -98,6 +107,11 @@ After tests, open PocketOS → Diagnostics → Export report and save pocketos-d
 
 ```powershell
 & $Adb -s $Serial pull /sdcard/Download/pocketos-diagnostics.txt (Join-Path $ResultsDir "pocketos-diagnostics.txt")
+$LatestRuntimeLog = (& $Adb -s $Serial shell run-as com.pocketos.app ls -t files/diagnostics 2>$null | Select-Object -First 1).Trim()
+if ($LatestRuntimeLog) {
+  & $Adb -s $Serial exec-out run-as com.pocketos.app cat "files/diagnostics/$LatestRuntimeLog" |
+    Set-Content -Encoding utf8 (Join-Path $ResultsDir "runtime-watchdog-journal.txt")
+}
 Compress-Archive -Path (Join-Path $ResultsDir "*") -DestinationPath (Join-Path $ArtifactDir "device-results.zip") -Force
 ```
 
@@ -106,14 +120,15 @@ Review the files before sharing. Do not attach passwords, private keys, or an ex
 ## Test checklist and expected results
 
 1. QEMU native launch: the executable runs from Android's extracted ARM64 native-library directory, reports QEMU 11.1.2, and exits 0.
-2. Asset integrity and disk initialization: the app-private installer initializes a valid ext4 seed; the test verifies the compressed seed hash before creating its isolated copy.
-3. Guest boot and serial readiness: Alpine reaches `New password:` or `pocketos login:` within 180 seconds. The runner reports the stage as it proceeds.
-4. First-run setup and login: the test sends an ephemeral random credential over serial, waits for setup completion, logs in as pocketos, and verifies a non-root UID.
-5. Persistence: the test performs QMP quit, boots the same isolated disk again, logs in, and verifies the setup marker and non-root account persist.
-6. Graceful shutdown: both QMP quit requests complete, QEMU exits with status 0, and disk leases release.
-7. Failure diagnostics and cleanup: Android instrumentation verifies stdout/stderr capture after a simulated guest boot failure, nonzero exit status, concurrent pipe closure during force-stop, and isolation from output-consumer exceptions.
-8. Bounded duration and cleanup: the complete Alpine workflow ends within the 8-minute independent watchdog deadline; the production controller also stops a guest that fails to reach readiness within 180 seconds. On test failure it reports the last completed stage and sanitized bounded serial/stderr tails; the watchdog force-stops QEMU even if the instrumentation thread is blocked, and the test also force-stops QEMU when QMP shutdown does not complete.
-9. Runtime gate: only successful QEMU execution and guest-boot tests record version-scoped evidence. If either ARM64 test fails or is skipped, the PocketOS start gate remains closed.
+2. Real-process watchdog: an actual packaged Alpine QEMU process is launched; while the instrumentation caller waits, the independent five-second watchdog terminates QEMU, closes its output pumps, and leaves a QMP/CPU/serial/stderr snapshot in the app-private journal.
+3. Asset integrity and disk initialization: the app-private installer initializes a valid ext4 seed; the test verifies the compressed seed hash before creating its isolated copy.
+4. Guest boot and serial readiness: Alpine reaches `New password:` or `pocketos login:` within 180 seconds. The runner reports the stage as it proceeds.
+5. First-run setup and login: the test sends an ephemeral random credential over serial, waits for setup completion, logs in as pocketos, and verifies a non-root UID.
+6. Persistence: the test performs QMP quit, boots the same isolated disk again, logs in, and verifies the setup marker and non-root account persist.
+7. Graceful shutdown: both QMP quit requests complete, QEMU exits with status 0, and disk leases release.
+8. Failure diagnostics and cleanup: Android instrumentation verifies stdout/stderr capture after a simulated guest boot failure, nonzero exit status, concurrent pipe closure during force-stop, and isolation from output-consumer exceptions.
+9. Bounded duration and cleanup: the complete Alpine workflow ends within the 8-minute independent watchdog deadline; the production controller also stops a guest that fails to reach readiness within 180 seconds. The test reports the last stage and sanitized bounded serial/stderr tails; the watchdog terminates QEMU even if the instrumentation thread is blocked.
+10. Runtime gate: only successful QEMU execution and guest-boot tests record version-scoped evidence. If either ARM64 boot proof fails or is skipped, the PocketOS start gate remains closed.
 
 Host QEMU and Android x86_64 emulator runs do not establish physical ARM64 compatibility. The Vivo test is the first device-level proof. Report actual outputs and failures before enabling real PocketOS sessions.
 
