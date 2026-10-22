@@ -60,12 +60,18 @@ class NativeVmBridgeInstrumentationTest {
             command = listOf(
                 "/system/bin/sh",
                 "-c",
-                "printf 'POCKETOS_CHILD_FAILURE_DIAGNOSTIC\\n' >&2; exit 23",
+                "printf 'POCKETOS_GUEST_BOOT_FAILURE\\n'; printf 'POCKETOS_QEMU_FAILURE_DIAGNOSTIC\\n' >&2; exit 23",
             ),
+            onSerialOutput = { bytes ->
+                synchronized(lock) {
+                    output.append(String(bytes, Charsets.UTF_8))
+                    if (output.contains("POCKETOS_GUEST_BOOT_FAILURE")) diagnosticSeen.countDown()
+                }
+            },
             onDiagnosticOutput = { bytes ->
                 synchronized(lock) {
                     output.append(String(bytes, Charsets.UTF_8))
-                    if (output.contains("POCKETOS_CHILD_FAILURE_DIAGNOSTIC")) diagnosticSeen.countDown()
+                    if (output.contains("POCKETOS_QEMU_FAILURE_DIAGNOSTIC")) diagnosticSeen.countDown()
                 }
             },
         )
@@ -73,8 +79,58 @@ class NativeVmBridgeInstrumentationTest {
         assertTrue("Child process did not exit", process.awaitExit(10, TimeUnit.SECONDS))
         assertEquals("Unexpected child exit status", 23, process.exitCode)
         assertTrue("Child stderr diagnostics were not captured", diagnosticSeen.await(5, TimeUnit.SECONDS))
+        assertTrue("Output pumps did not finish after failed guest exit", process.awaitOutputPumps(5, TimeUnit.SECONDS))
         synchronized(lock) {
-            assertTrue(output.contains("POCKETOS_CHILD_FAILURE_DIAGNOSTIC"))
+            assertTrue(output.contains("POCKETOS_GUEST_BOOT_FAILURE"))
+            assertTrue(output.contains("POCKETOS_QEMU_FAILURE_DIAGNOSTIC"))
+        }
+    }
+
+    @Test
+    fun concurrentPipeClosureDuringForcedCleanupIsExpected() {
+        val output = StringBuilder()
+        val lock = Any()
+        val ready = CountDownLatch(1)
+        val process = NativeProcessSupervisor().start(
+            command = listOf("/system/bin/sh", "-c", "printf 'POCKETOS_PIPE_READY\\n'; exec sleep 30"),
+            onSerialOutput = { bytes ->
+                synchronized(lock) {
+                    output.append(String(bytes, Charsets.UTF_8))
+                    if (output.contains("POCKETOS_PIPE_READY")) ready.countDown()
+                }
+            },
+            onDiagnosticOutput = { bytes -> synchronized(lock) { output.append(String(bytes, Charsets.UTF_8)) } },
+        )
+
+        try {
+            assertTrue("Child did not become ready for cleanup", ready.await(5, TimeUnit.SECONDS))
+            assertTrue("Child did not stop within the cleanup bound", process.forceStop(5, TimeUnit.SECONDS))
+            assertTrue("Output pumps remained blocked after child termination", process.awaitOutputPumps(5, TimeUnit.SECONDS))
+            assertTrue("Child still alive after forced cleanup", !process.isAlive)
+            synchronized(lock) {
+                assertTrue("Intentional stream closure was incorrectly reported as an error", !output.contains("pump read failed"))
+            }
+        } finally {
+            if (process.isAlive) process.forceStop(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    fun outputConsumerFailureDoesNotCrashSupervisorOrChild() {
+        val diagnostic = StringBuilder()
+        val lock = Any()
+        val process = NativeProcessSupervisor().start(
+            command = listOf("/system/bin/sh", "-c", "printf 'POCKETOS_CONSUMER_TEST\\n'; exit 0"),
+            onSerialOutput = { error("intentional test consumer failure") },
+            onDiagnosticOutput = { bytes -> synchronized(lock) { diagnostic.append(String(bytes, Charsets.UTF_8)) } },
+        )
+
+        assertTrue("Child process did not finish after a consumer error", process.awaitExit(10, TimeUnit.SECONDS))
+        assertEquals(0, process.exitCode)
+        assertTrue("Pumps did not finish after consumer error", process.awaitOutputPumps(5, TimeUnit.SECONDS))
+        synchronized(lock) {
+            assertTrue("Consumer failure was not retained as a sanitized diagnostic", diagnostic.contains("stdout pump consumer failed (IllegalStateException)"))
+            assertTrue("Diagnostic leaked the callback exception message", !diagnostic.contains("intentional test consumer failure"))
         }
     }
 

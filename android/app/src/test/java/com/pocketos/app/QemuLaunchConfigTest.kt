@@ -27,7 +27,8 @@ class QemuLaunchConfigTest {
         val args = config().toCommand()
 
         assertEquals("/data/app/lib/arm64/libqemu-system-aarch64.so", args.first())
-        assertTrue(args.containsAll(listOf("-machine", "virt", "-accel", "tcg", "-serial", "stdio")))
+        assertTrue(args.containsAll(listOf("-machine", "virt", "-accel", "tcg", "-cpu", "cortex-a72", "-serial", "stdio")))
+        assertEquals("console=ttyAMA0 root=/dev/vda rootfstype=ext4 rw rootwait", args[args.indexOf("-append") + 1])
         assertTrue(args.containsAll(listOf("-kernel", "/data/user/0/com.pocketos.app/files/vm/vmlinuz")))
         assertTrue(args.containsAll(listOf("-initrd", "/data/user/0/com.pocketos.app/files/vm/initramfs")))
         assertTrue(args.contains("-drive"))

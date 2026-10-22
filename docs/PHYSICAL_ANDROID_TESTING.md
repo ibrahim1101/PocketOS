@@ -25,7 +25,7 @@ Get-Content (Join-Path $ArtifactDir "dist\SHA256SUMS")
 
 The workflow must show success before treating the APKs as a validated handoff. Check that build-info.txt contains the same commit SHA used in the artifact names.
 
-Trusted non-PR builds on the same branch reuse one development debug signing key from the GitHub Actions cache. CI records its certificate SHA-256 in build-info.txt and verifies that the app and instrumentation APKs share that certificate. After switching from an older APK signed by a different key, uninstall it once; later builds from this branch can be installed over the existing app with `adb install -r`. The instrumentation APK must also come from the same workflow run as the app APK. This is a development signing identity, not a release key. GitHub may evict inactive caches, so compare the recorded fingerprint when upgrading; a changed fingerprint requires uninstalling the old app first.
+Trusted pushes to `feat/m1-linux-boot` reuse one development debug signing key from the GitHub Actions cache. Pull-request builds intentionally use an isolated temporary key. CI records the certificate SHA-256 in build-info.txt and verifies that the app and instrumentation APKs share that certificate. If the installed APK came from an older or pull-request build with a different key, uninstall it once before switching to trusted branch artifacts; later trusted branch builds can be installed over it with `adb install -r`. The instrumentation APK must also come from the same workflow run as the app APK. This is a development signing identity, not a release key. GitHub may evict inactive caches, so compare the recorded fingerprint when upgrading; a changed fingerprint requires uninstalling the old app first.
 
 ## Install and run on the Vivo
 
@@ -48,7 +48,7 @@ If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the installed PocketOS 
 
 Expected ABI: arm64-v8a. Android 16 may report release 16 or API level 36.
 
-Verify the runner is installed, then run the ARM64 QEMU executable check and full guest workflow independently. The guest test has a hard 12-minute timeout. It logs each stage, emits a 15-second heartbeat while waiting for guest serial output, and captures bounded QEMU thread state, cumulative CPU ticks and per-interval CPU deltas, serial output, and stderr. Procfs fields are best effort because Android may restrict them. Timeout diagnostics redact the ephemeral test password. The test uses an isolated temporary guest disk and never changes the user's persistent guest disk.
+Verify the runner is installed, then run the ARM64 QEMU executable check and full guest workflow independently. The guest test has a hard 12-minute timeout. It logs each stage, emits a 15-second heartbeat while waiting for guest serial output, and captures bounded QEMU thread state, cumulative CPU ticks and per-interval CPU deltas, serial output, stderr, exit status, and a read-only QMP status probe before forced cleanup. Procfs fields are best effort because Android may restrict them. Timeout diagnostics redact the ephemeral test password. The test uses an isolated temporary guest disk and never changes the user's persistent guest disk.
 
 ```powershell
 $ResultsDir = Join-Path $ArtifactDir "device-results"
@@ -111,7 +111,7 @@ Review the files before sharing. Do not attach passwords, private keys, or an ex
 4. First-run setup and login: the test sends an ephemeral random credential over serial, waits for setup completion, logs in as pocketos, and verifies a non-root UID.
 5. Persistence: the test performs QMP quit, boots the same isolated disk again, logs in, and verifies the setup marker and non-root account persist.
 6. Graceful shutdown: both QMP quit requests complete, QEMU exits with status 0, and disk leases release.
-7. Failure diagnostics: a separate Android instrumentation test verifies stderr capture and nonzero child-process exit status.
+7. Failure diagnostics and cleanup: Android instrumentation verifies stdout/stderr capture after a simulated guest boot failure, nonzero exit status, concurrent pipe closure during force-stop, and isolation from output-consumer exceptions.
 8. Bounded duration and cleanup: the complete Alpine workflow ends within 12 minutes. On failure it reports the last completed stage and sanitized bounded serial/stderr tails; QEMU is force-stopped if QMP shutdown did not complete.
 9. Runtime gate: only successful QEMU execution and guest-boot tests record version-scoped evidence. If either ARM64 test fails or is skipped, the PocketOS start gate remains closed.
 

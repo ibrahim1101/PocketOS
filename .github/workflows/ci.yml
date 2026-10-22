@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, feat/m1-linux-boot]
   workflow_dispatch:
 
 permissions:
@@ -36,7 +36,7 @@ jobs:
       - name: Install Android QEMU cross-build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake bison e2fsprogs flex libtool ninja-build pkg-config
+          sudo apt-get install -y autoconf automake bison e2fsprogs flex libtool ninja-build pkg-config qemu-system-arm
           python3 -m venv "$RUNNER_TEMP/qemu-build-venv"
           "$RUNNER_TEMP/qemu-build-venv/bin/pip" install "meson==1.7.0"
           echo "$RUNNER_TEMP/qemu-build-venv/bin" >> "$GITHUB_PATH"
@@ -64,6 +64,13 @@ jobs:
             "$RUNNER_TEMP/pocketos-guest.ext4" \
             android/app/src/main/assets/pocketos
           find android/app/src/main/assets/pocketos -maxdepth 1 -type f -printf "%f %s bytes\n"
+      - name: Boot the exact packaged Alpine assets under host QEMU
+        env:
+          KERNEL: ${{ github.workspace }}/android/app/src/main/assets/pocketos/vmlinuz-virt
+          INITRAMFS: ${{ github.workspace }}/android/app/src/main/assets/pocketos/initramfs-virt
+          ROOTFS: ${{ runner.temp }}/pocketos-guest.ext4
+          BOOT_TIMEOUT_SECONDS: "120"
+        run: bash scripts/check-guest-boot.sh
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"

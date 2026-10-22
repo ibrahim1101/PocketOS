@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -24,6 +25,38 @@ import java.util.zip.GZIPInputStream
 
 @RunWith(AndroidJUnit4::class)
 class QemuAndroidRuntimeInstrumentationTest {
+    @Test
+    fun failedGuestBootTimesOutWithDiagnosticsAndCleanupPreservesFailure() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val socket = File(context.cacheDir, "qmp-failed-boot-${UUID.randomUUID()}.sock")
+        val console = SerialCapture("ephemeral-test-secret", socket)
+        val stderr = BoundedDiagnosticCapture()
+        val process = NativeProcessSupervisor().start(
+            command = listOf("/system/bin/sh", "-c", "printf 'POCKETOS_GUEST_BOOT_STARTED\\n'; exec sleep 30"),
+            onSerialOutput = console::receive,
+            onDiagnosticOutput = stderr::append,
+        )
+
+        val failure = runCatching {
+            try {
+                awaitStage("Waiting for an intentionally absent guest prompt", "POCKETOS_PROMPT_NOT_PRESENT", console, process, stderr, 500)
+            } finally {
+                stopIfStillRunning("failed guest boot regression", process, console, stderr)
+                runCatching { socket.delete() }
+            }
+        }.exceptionOrNull()
+
+        assertNotNull("Boot timeout was lost during cleanup", failure)
+        assertTrue("Cleanup masked the original bounded boot failure: $failure", failure is AssertionError)
+        val diagnostic = failure!!.message.orEmpty()
+        assertTrue("Failure did not identify the failed boot stage", diagnostic.contains("Timed out: Waiting for an intentionally absent guest prompt"))
+        assertTrue("Failure did not include process exit state", diagnostic.contains("exitStatus=running"))
+        assertTrue("Failure did not include the serial tail", diagnostic.contains("POCKETOS_GUEST_BOOT_STARTED"))
+        assertTrue("Failure did not include QMP connectivity", diagnostic.contains("qmp=unavailable"))
+        assertTrue("Process remained alive after bounded cleanup", !process.isAlive)
+        assertTrue("Output pumps did not finish after bounded cleanup", process.awaitOutputPumps(5, TimeUnit.SECONDS))
+    }
+
     @Test
     fun packagedArm64QemuRunsOnAndroid() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -78,9 +111,9 @@ class QemuAndroidRuntimeInstrumentationTest {
             reportStage("Creating an isolated copy of the Alpine seed disk")
             val firstLease = GuestDiskLease.acquire(disk)
             var firstProcess: NativeProcessHandle? = null
+            val console = SerialCapture(password, qmpSocket)
+            val stderr = BoundedDiagnosticCapture()
             try {
-                val console = SerialCapture(password)
-                val stderr = BoundedDiagnosticCapture()
                 firstProcess = startGuest(context, installed, disk, qmpSocket, console, stderr)
                 awaitStage("Waiting for the first-run password prompt", "New password:", console, firstProcess, stderr, GUEST_BOOT_TIMEOUT_MS)
                 assertTrue("Guest readiness probe did not recognize first-run readiness", console.probe.isReady)
@@ -99,17 +132,17 @@ class QemuAndroidRuntimeInstrumentationTest {
                 verifyGuestAccountAndPersistentMarker(console, firstProcess, stderr)
                 gracefulQmpShutdown(firstProcess, qmpSocket, console, stderr)
             } finally {
-                stopIfStillRunning("first boot", firstProcess)
-                firstLease.close()
-                qmpSocket.delete()
+                stopIfStillRunning("first boot", firstProcess, console, stderr)
+                runCatching { firstLease.close() }
+                runCatching { qmpSocket.delete() }
             }
 
             reportStage("Rebooting the isolated disk to verify persisted credentials and marker")
             val secondLease = GuestDiskLease.acquire(disk)
             var secondProcess: NativeProcessHandle? = null
+            val console = SerialCapture(password, qmpSocket)
+            val stderr = BoundedDiagnosticCapture()
             try {
-                val console = SerialCapture(password)
-                val stderr = BoundedDiagnosticCapture()
                 secondProcess = startGuest(context, installed, disk, qmpSocket, console, stderr)
                 awaitStage("Waiting for login after restart", "pocketos login:", console, secondProcess, stderr, GUEST_BOOT_TIMEOUT_MS)
                 assertTrue("Readiness probe did not recognize login readiness", console.probe.isReady)
@@ -121,13 +154,13 @@ class QemuAndroidRuntimeInstrumentationTest {
                 verifyGuestAccountAndPersistentMarker(console, secondProcess, stderr)
                 gracefulQmpShutdown(secondProcess, qmpSocket, console, stderr)
             } finally {
-                stopIfStillRunning("second boot", secondProcess)
-                secondLease.close()
-                qmpSocket.delete()
+                stopIfStillRunning("second boot", secondProcess, console, stderr)
+                runCatching { secondLease.close() }
+                runCatching { qmpSocket.delete() }
             }
         } finally {
-            disk.delete()
-            File(context.cacheDir, "pocketos-seed-$validationId.gzip").delete()
+            runCatching { disk.delete() }
+            runCatching { File(context.cacheDir, "pocketos-seed-$validationId.gzip").delete() }
         }
 
         AndroidRuntimeValidation.recordGuestBootVerified(context)
@@ -243,9 +276,9 @@ class QemuAndroidRuntimeInstrumentationTest {
         assumeTrue("ARM64 Android runtime required", File(context.applicationInfo.nativeLibraryDir).name == "arm64")
     }
 
-    private class SerialCapture(private val password: String) {
+    private class SerialCapture(private val password: String, val qmpSocket: File) {
         private val lock = Object()
-        private val capture = BoundedDiagnosticCapture(MAX_SERIAL_CHARS).apply { redact(password) }
+        private val capture = BoundedDiagnosticCapture(MAX_DIAGNOSTIC_CHARS).apply { redact(password) }
         val probe = GuestReadinessProbe()
 
         fun receive(bytes: ByteArray) {
@@ -307,7 +340,9 @@ class QemuAndroidRuntimeInstrumentationTest {
             )
         }
         if (!reached) {
-            throw AssertionError("Timed out: $stage. ${diagnosticSummary(process, console, stderr)}")
+            if (!process.isAlive) process.awaitOutputPumps(2, TimeUnit.SECONDS)
+            val failure = if (process.isAlive) "Timed out: $stage" else "Guest process exited before completing: $stage"
+            throw AssertionError("$failure. ${diagnosticSummary(process, console, stderr)}")
         }
         reportStage("Reached: $stage")
     }
@@ -316,17 +351,42 @@ class QemuAndroidRuntimeInstrumentationTest {
         process: NativeProcessHandle,
         console: SerialCapture,
         stderr: BoundedDiagnosticCapture,
-    ): String = "${process.diagnosticSnapshot()}; serialTail=${console.diagnosticTail()}; qemuStderrTail=${stderr.snapshot()}"
+    ): String {
+        val processState = runCatching { process.diagnosticSnapshot() }
+            .getOrElse { "qemuProcfs=unavailable(${it.javaClass.simpleName})" }
+            .take(MAX_PROCESS_SNAPSHOT_CHARS)
+        val qmpState = QmpClient().diagnosticProbe(console.qmpSocket.absolutePath)
+        val serialTail = console.diagnosticTail().takeLast(MAX_FAILURE_TAIL_CHARS)
+        val stderrTail = stderr.snapshot().takeLast(MAX_FAILURE_TAIL_CHARS)
+        return "exitStatus=${process.exitStatusLabel()}; $processState; qmp=$qmpState; " +
+            "serialTail=$serialTail; qemuStderrTail=$stderrTail"
+    }
 
-    private fun stopIfStillRunning(stage: String, process: NativeProcessHandle?) {
-        if (process?.isAlive != true) return
+    private fun stopIfStillRunning(
+        stage: String,
+        process: NativeProcessHandle?,
+        console: SerialCapture,
+        stderr: BoundedDiagnosticCapture,
+    ) {
+        if (process == null) return
+        if (!process.isAlive) {
+            runCatching { process.awaitOutputPumps(2, TimeUnit.SECONDS) }
+            return
+        }
         val wasInterrupted = Thread.interrupted()
         try {
-            reportStage("Forcibly stopping QEMU after $stage did not shut down cleanly")
-            val stopped = process.forceStop(timeout = CLEANUP_TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
-            if (!stopped) Log.e(TAG, "QEMU remained alive after bounded cleanup stage=$stage")
-        } catch (failure: Exception) {
-            Log.e(TAG, "QEMU cleanup encountered an error stage=$stage", failure)
+            val snapshot = runCatching { diagnosticSummary(process, console, stderr) }
+                .getOrElse { "diagnosticsUnavailable(${it.javaClass.simpleName}); exitStatus=${process.exitStatusLabel()}" }
+            runCatching { reportStage("Forcibly stopping QEMU after $stage did not shut down cleanly") }
+            Log.e(TAG, "pre-force-stop stage=$stage $snapshot")
+            val stopped = runCatching {
+                process.forceStop(timeout = CLEANUP_TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
+            }.getOrElse {
+                Log.e(TAG, "QEMU force-stop failed stage=$stage type=${it.javaClass.simpleName}")
+                false
+            }
+            val pumpsStopped = runCatching { process.awaitOutputPumps(2, TimeUnit.SECONDS) }.getOrDefault(false)
+            Log.i(TAG, "QEMU cleanup stage=$stage stopped=$stopped exitStatus=${process.exitStatusLabel()} outputPumpsStopped=$pumpsStopped")
         } finally {
             if (wasInterrupted) Thread.currentThread().interrupt()
         }
@@ -348,7 +408,9 @@ class QemuAndroidRuntimeInstrumentationTest {
         private const val QMP_EXIT_TIMEOUT_MS = 15L
         private const val MIN_TEST_STORAGE_BYTES = 600L * 1024L * 1024L
         private const val EXT4_MAGIC_OFFSET = 1080L
-        private const val MAX_SERIAL_CHARS = 8_192
+        private const val MAX_DIAGNOSTIC_CHARS = 4_096
+        private const val MAX_FAILURE_TAIL_CHARS = 2_048
+        private const val MAX_PROCESS_SNAPSHOT_CHARS = 4_096
         private const val CLEANUP_TIMEOUT_SECONDS = 10L
         private const val HEARTBEAT_INTERVAL_MS = 15_000L
     }

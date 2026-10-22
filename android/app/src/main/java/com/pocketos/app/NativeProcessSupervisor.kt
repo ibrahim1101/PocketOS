@@ -2,7 +2,9 @@ package com.pocketos.app
 
 import java.io.File
 import java.io.InputStream
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Starts a native guest engine as a child process of the dedicated VM service.
@@ -28,31 +30,79 @@ class NativeProcessSupervisor : GuestProcessLauncher {
         }
         val process = builder.start()
         activeProcess = process
-        pump(process.inputStream, "pocketos-serial", onSerialOutput)
-        pump(process.errorStream, "pocketos-qemu-log", onDiagnosticOutput)
-        return NativeProcessHandle(process)
+        val pumpState = ProcessPumpState()
+        val pumps = CountDownLatch(2)
+        pump(process, process.inputStream, "pocketos-serial", "stdout", pumpState, pumps, onSerialOutput, onDiagnosticOutput)
+        pump(process, process.errorStream, "pocketos-qemu-log", "stderr", pumpState, pumps, onDiagnosticOutput, onDiagnosticOutput)
+        return NativeProcessHandle(process, pumpState, pumps)
     }
 
     fun isRunning(): Boolean = activeProcess?.isAlive == true
 
-    private fun pump(stream: InputStream, threadName: String, receiver: (ByteArray) -> Unit) {
+    private fun pump(
+        process: Process,
+        stream: InputStream,
+        threadName: String,
+        streamLabel: String,
+        pumpState: ProcessPumpState,
+        pumps: CountDownLatch,
+        receiver: (ByteArray) -> Unit,
+        onDiagnosticOutput: (ByteArray) -> Unit,
+    ) {
         Thread({
-            stream.use { input ->
+            var forwardOutput = true
+            try {
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                 while (true) {
-                    val count = input.read(buffer)
+                    val count = try {
+                        stream.read(buffer)
+                    } catch (failure: Exception) {
+                        if (process.isAlive && !pumpState.expectedClosure.get()) {
+                            reportPumpFailure(onDiagnosticOutput, streamLabel, "read", failure)
+                        }
+                        break
+                    }
                     if (count < 0) break
-                    receiver(buffer.copyOf(count))
+                    if (forwardOutput) {
+                        try {
+                            receiver(buffer.copyOf(count))
+                        } catch (failure: Exception) {
+                            reportPumpFailure(onDiagnosticOutput, streamLabel, "consumer", failure)
+                            // Keep draining the pipe so a chatty child cannot block on a full buffer.
+                            forwardOutput = false
+                        }
+                    }
                 }
+            } finally {
+                runCatching { stream.close() }
+                pumps.countDown()
             }
         }, threadName).apply {
             isDaemon = true
             start()
         }
     }
+
+    private fun reportPumpFailure(
+        onDiagnosticOutput: (ByteArray) -> Unit,
+        streamLabel: String,
+        operation: String,
+        failure: Exception,
+    ) {
+        val safeMessage = "PocketOS $streamLabel pump $operation failed (${failure.javaClass.simpleName})\n"
+        runCatching { onDiagnosticOutput(safeMessage.toByteArray(Charsets.UTF_8)) }
+    }
 }
 
-class NativeProcessHandle internal constructor(private val process: Process) : GuestProcess {
+internal class ProcessPumpState {
+    val expectedClosure = AtomicBoolean(false)
+}
+
+class NativeProcessHandle internal constructor(
+    private val process: Process,
+    private val pumpState: ProcessPumpState,
+    private val outputPumps: CountDownLatch,
+) : GuestProcess {
     private val previousThreadCpuTicks = mutableMapOf<String, Long>()
 
     override val isAlive: Boolean
@@ -75,19 +125,28 @@ class NativeProcessHandle internal constructor(private val process: Process) : G
 
     /** Last-resort process termination; callers should request QEMU shutdown first. */
     override fun forceStop(timeout: Long, unit: TimeUnit): Boolean {
+        pumpState.expectedClosure.set(true)
         if (process.isAlive) {
             process.destroyForcibly()
         }
         return process.waitFor(timeout, unit)
     }
 
+    internal fun awaitOutputPumps(timeout: Long, unit: TimeUnit): Boolean = outputPumps.await(timeout, unit)
+
+    fun exitStatusLabel(): String = runCatching {
+        if (process.isAlive) "running" else "exited(${process.exitValue()})"
+    }.getOrDefault("unavailable")
+
     /** Best-effort, bounded snapshot of procfs fields that help distinguish an idle guest from active TCG work. */
     @Synchronized
     fun diagnosticSnapshot(): String = runCatching {
         val ownerPid = android.os.Process.myPid()
-        val childPids = readProcFile(File("/proc/$ownerPid/task/$ownerPid/children"))
-            .split(Regex("\\s+"))
+        val ownerTasks = File("/proc/$ownerPid/task").listFiles().orEmpty().take(MAX_OWNER_THREADS)
+        val childPids = ownerTasks.asSequence()
+            .flatMap { task -> readProcFile(File(task, "children")).split(Regex("\\s+")).asSequence() }
             .mapNotNull { it.toIntOrNull() }
+            .distinct()
         val qemuProcesses = childPids.asSequence()
             .map { File("/proc/$it") }
             .filter { directory -> readProcFile(File(directory, "cmdline")).contains(QEMU_EXECUTABLE_MARKER) }
@@ -141,6 +200,7 @@ class NativeProcessHandle internal constructor(private val process: Process) : G
     private companion object {
         const val MAX_DIAGNOSTIC_THREADS = 8
         const val MAX_DIAGNOSTIC_PROCESSES = 2
+        const val MAX_OWNER_THREADS = 64
         const val QEMU_EXECUTABLE_MARKER = "libqemu-system-aarch64.so"
     }
 }
