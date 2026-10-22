@@ -47,6 +47,17 @@ data class QemuLaunchConfig(
         "-qmp", "unix:${qmpSocket.absolutePath},server=on,wait=off",
         "-no-reboot",
     )
+
+    /** Stable launch facts for logs; filesystem paths and any future secret arguments stay out. */
+    fun diagnosticSummary(): String = buildString {
+        append("machine=virt accel=tcg cpu=cortex-a72 vcpus=$vcpus memoryMiB=$memoryMiB ")
+        append("kernel=<app-private>/").append(kernel.name).append(' ')
+        append("initramfs=<app-private>/").append(initramfs.name).append(' ')
+        append("disk=raw-virtio-blk:<app-private>/").append(rootDisk.name).append(' ')
+        append("console=ttyAMA0 serial=stdio qmp=unix:<app-private>/").append(qmpSocket.name).append(' ')
+        append("root=/dev/vda rootfstype=ext4 rw rootwait ")
+        append("net=user hostBind=$hostBindAddress hostPort=$hostHttpPort guestPort=$guestHttpPort noReboot=true")
+    }
 }
 
 

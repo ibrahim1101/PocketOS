@@ -19,6 +19,7 @@ import java.io.FileOutputStream
 import java.security.DigestInputStream
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
@@ -55,6 +56,38 @@ class QemuAndroidRuntimeInstrumentationTest {
         assertTrue("Failure did not include QMP connectivity", diagnostic.contains("qmp=unavailable"))
         assertTrue("Process remained alive after bounded cleanup", !process.isAlive)
         assertTrue("Output pumps did not finish after bounded cleanup", process.awaitOutputPumps(5, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun independentWatchdogKillsStalledProcessWhileTestThreadIsBlocked() {
+        val output = BoundedDiagnosticCapture()
+        val process = NativeProcessSupervisor().start(
+            command = listOf("/system/bin/sh", "-c", "exec sleep 30"),
+            onDiagnosticOutput = output::append,
+        )
+        val owner = Thread.currentThread()
+        val released = CountDownLatch(1)
+        val watchdog = IndependentWatchdog(250) {
+            Log.e(TAG, "watchdog regression pre-stop ${process.diagnosticSnapshot()}")
+            process.forceStop(2, TimeUnit.SECONDS)
+            owner.interrupt()
+        }
+        var interrupted = false
+        try {
+            try {
+                released.await(10, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                interrupted = true
+            }
+            assertTrue("Independent watchdog did not fire", watchdog.hasFired)
+            assertTrue("Watchdog did not interrupt the blocked test thread", interrupted)
+            assertTrue("Stalled child survived watchdog termination", !process.isAlive)
+        } finally {
+            watchdog.close()
+            Thread.interrupted()
+            if (process.isAlive) process.forceStop(2, TimeUnit.SECONDS)
+            process.awaitOutputPumps(2, TimeUnit.SECONDS)
+        }
     }
 
     @Test
@@ -106,6 +139,20 @@ class QemuAndroidRuntimeInstrumentationTest {
         val disk = freshValidationDisk(context, validationId)
         val qmpSocket = File(context.filesDir, "qmp-v-$validationId.sock")
         val password = UUID.randomUUID().toString().replace("-", "").take(18)
+        val activeProcesses = Collections.synchronizedList(mutableListOf<ActiveQemu>())
+        val testThread = Thread.currentThread()
+        val watchdog = IndependentWatchdog(TEST_WATCHDOG_TIMEOUT_MS) {
+            val active = synchronized(activeProcesses) { activeProcesses.toList() }
+            active.forEach { guest ->
+                val process = guest.process
+                val snapshot = runCatching { diagnosticSummary(process, guest.console, guest.stderr) }
+                    .getOrElse { "exitStatus=${process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
+                Log.e(TAG, "independent test deadline exceeded; pre-stop $snapshot")
+                runCatching { process.forceStop(CLEANUP_TIMEOUT_SECONDS, TimeUnit.SECONDS) }
+            }
+            Log.e(TAG, "independent test deadline exceeded; terminating blocked instrumentation wait")
+            testThread.interrupt()
+        }
 
         try {
             reportStage("Creating an isolated copy of the Alpine seed disk")
@@ -114,7 +161,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             val firstConsole = SerialCapture(password, qmpSocket)
             val firstStderr = BoundedDiagnosticCapture()
             try {
-                firstProcess = startGuest(context, installed, disk, qmpSocket, firstConsole, firstStderr)
+                firstProcess = startGuest(context, installed, disk, qmpSocket, firstConsole, firstStderr, activeProcesses)
                 awaitStage("Waiting for the first-run password prompt", "New password:", firstConsole, firstProcess, firstStderr, GUEST_BOOT_TIMEOUT_MS)
                 assertTrue("Guest readiness probe did not recognize first-run readiness", firstConsole.probe.isReady)
                 reportStage("Submitting an ephemeral password to the isolated guest disk")
@@ -143,7 +190,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             val secondConsole = SerialCapture(password, qmpSocket)
             val secondStderr = BoundedDiagnosticCapture()
             try {
-                secondProcess = startGuest(context, installed, disk, qmpSocket, secondConsole, secondStderr)
+                secondProcess = startGuest(context, installed, disk, qmpSocket, secondConsole, secondStderr, activeProcesses)
                 awaitStage("Waiting for login after restart", "pocketos login:", secondConsole, secondProcess, secondStderr, GUEST_BOOT_TIMEOUT_MS)
                 assertTrue("Readiness probe did not recognize login readiness", secondConsole.probe.isReady)
 
@@ -159,6 +206,7 @@ class QemuAndroidRuntimeInstrumentationTest {
                 runCatching { qmpSocket.delete() }
             }
         } finally {
+            watchdog.close()
             runCatching { disk.delete() }
             runCatching { File(context.cacheDir, "pocketos-seed-$validationId.gzip").delete() }
         }
@@ -202,6 +250,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         qmpSocket: File,
         console: SerialCapture,
         stderr: BoundedDiagnosticCapture,
+        activeProcesses: MutableList<ActiveQemu>,
     ): NativeProcessHandle {
         qmpSocket.delete()
         val launch = QemuLaunchConfig(
@@ -214,12 +263,13 @@ class QemuAndroidRuntimeInstrumentationTest {
             vcpus = 1,
             hostHttpPort = (40_000..59_999).random(),
         )
+        Log.i(TAG, "qemu launch ${launch.diagnosticSummary()}")
         return NativeProcessSupervisor().start(
             command = launch.toCommand(),
             workingDirectory = context.filesDir,
             onSerialOutput = console::receive,
             onDiagnosticOutput = stderr::append,
-        )
+        ).also { process -> activeProcesses += ActiveQemu(process, console, stderr) }
     }
 
     private fun freshValidationDisk(context: Context, id: String): File {
@@ -320,6 +370,12 @@ class QemuAndroidRuntimeInstrumentationTest {
         fun diagnosticTail(): String = capture.snapshot()
     }
 
+    private data class ActiveQemu(
+        val process: NativeProcessHandle,
+        val console: SerialCapture,
+        val stderr: BoundedDiagnosticCapture,
+    )
+
     private fun awaitStage(
         stage: String,
         token: String,
@@ -402,6 +458,7 @@ class QemuAndroidRuntimeInstrumentationTest {
     companion object {
         private const val TAG = "PocketOSRuntimeTest"
         private const val MAX_GUEST_TEST_DURATION_MS = 12 * 60 * 1_000L
+        private const val TEST_WATCHDOG_TIMEOUT_MS = 8 * 60 * 1_000L
         private const val GUEST_BOOT_TIMEOUT_MS = 180_000L
         private const val PROMPT_TIMEOUT_MS = 30_000L
         private const val QMP_TIMEOUT_MS = 5_000

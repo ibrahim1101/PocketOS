@@ -75,4 +75,18 @@ class QemuLaunchConfigTest {
         assertTrue(badMemory.isFailure)
         assertTrue(badPort.isFailure)
     }
+
+    @Test
+    fun diagnosticSummaryKeepsBootFactsAndRedactsPrivatePaths() {
+        val config = config()
+        val summary = config.diagnosticSummary()
+
+        assertTrue(summary.contains("machine=virt accel=tcg cpu=cortex-a72 vcpus=2"))
+        assertTrue(summary.contains("console=ttyAMA0 serial=stdio"))
+        assertTrue(summary.contains("root=/dev/vda rootfstype=ext4 rw rootwait"))
+        assertTrue(summary.contains("hostBind=127.0.0.1"))
+        assertTrue(summary.contains("<app-private>/vmlinuz"))
+        assertFalse(summary.contains("/data/user/0"))
+        assertFalse(summary.contains(config.qmpSocket.absolutePath))
+    }
 }

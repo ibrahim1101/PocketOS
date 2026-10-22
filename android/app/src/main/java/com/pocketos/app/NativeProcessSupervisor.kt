@@ -56,7 +56,7 @@ class NativeProcessSupervisor : GuestProcessLauncher {
                 while (true) {
                     val count = try {
                         stream.read(buffer)
-                    } catch (failure: Exception) {
+                    } catch (failure: Throwable) {
                         if (process.isAlive && !pumpState.expectedClosure.get()) {
                             reportPumpFailure(onDiagnosticOutput, streamLabel, "read", failure)
                         }
@@ -66,7 +66,7 @@ class NativeProcessSupervisor : GuestProcessLauncher {
                     if (forwardOutput) {
                         try {
                             receiver(buffer.copyOf(count))
-                        } catch (failure: Exception) {
+                        } catch (failure: Throwable) {
                             reportPumpFailure(onDiagnosticOutput, streamLabel, "consumer", failure)
                             // Keep draining the pipe so a chatty child cannot block on a full buffer.
                             forwardOutput = false
@@ -87,7 +87,7 @@ class NativeProcessSupervisor : GuestProcessLauncher {
         onDiagnosticOutput: (ByteArray) -> Unit,
         streamLabel: String,
         operation: String,
-        failure: Exception,
+        failure: Throwable,
     ) {
         val safeMessage = "PocketOS $streamLabel pump $operation failed (${failure.javaClass.simpleName})\n"
         runCatching { onDiagnosticOutput(safeMessage.toByteArray(Charsets.UTF_8)) }
@@ -167,11 +167,11 @@ class NativeProcessHandle internal constructor(
             ).mapNotNull { field ->
                 status.lineSequence().firstOrNull { it.startsWith("$field:") }?.trim()
             }
-            val tasks = File(processDir, "task").listFiles()
+            val taskEntries = File(processDir, "task").listFiles()
                 ?.sortedBy { it.name.toIntOrNull() ?: Int.MAX_VALUE }
                 ?.take(MAX_DIAGNOSTIC_THREADS)
                 .orEmpty()
-                .joinToString(prefix = "[", postfix = "]") { task ->
+            val tasks = taskEntries.joinToString(prefix = "[", postfix = "]") { task ->
                     val taskStatus = readProcFile(File(task, "status"))
                     val name = taskStatus.lineSequence().firstOrNull { it.startsWith("Name:") }
                         ?.substringAfter(':')?.trim()?.take(32) ?: "?"
@@ -191,7 +191,10 @@ class NativeProcessHandle internal constructor(
                     }
                     "${task.name}:$name:$state:wchan=$wchan:cpuTicks=$cpuValue:cpuDeltaTicks=$cpuDelta:vcsw=$switches"
                 }
-            "pid=${processDir.name} alive=$isAlive status=${statusFields.joinToString(",")}; threads=$tasks"
+            val threadCount = status.lineSequence().firstOrNull { it.startsWith("Threads:") }
+                ?.substringAfter(':')?.trim() ?: "?"
+            "pid=${processDir.name} alive=$isAlive status=${statusFields.joinToString(",")}; " +
+                "threadCount=$threadCount sampledThreads=${taskEntries.size} threads=$tasks"
         }
     }.getOrElse { "qemuProcfs=unavailable alive=$isAlive reason=${it.javaClass.simpleName}" }
 
@@ -205,7 +208,8 @@ class NativeProcessHandle internal constructor(
 
     private companion object {
         const val MAX_DISCOVERED_CHILDREN = 16
-        const val MAX_DIAGNOSTIC_THREADS = 8
+        // QEMU normally has only a handful of threads; the cap keeps procfs snapshots bounded.
+        const val MAX_DIAGNOSTIC_THREADS = 64
         const val MAX_DIAGNOSTIC_PROCESSES = 2
         const val MAX_OWNER_THREADS = 64
         const val QEMU_EXECUTABLE_MARKER = "libqemu-system-aarch64.so"

@@ -33,6 +33,9 @@ class QmpClientInstrumentationTest {
                     assertEquals("{\"execute\":\"query-status\"}", reader.readLine())
                     writer.write("{\"return\":{\"status\":\"running\",\"running\":true}}\n")
                     writer.flush()
+                    assertEquals("{\"execute\":\"query-cpus-fast\"}", reader.readLine())
+                    writer.write("{\"return\":[{\"cpu-index\":0,\"thread-id\":1234,\"halted\":false}]}\n")
+                    writer.flush()
                 }
             } catch (failure: Throwable) {
                 serverFailure.set(failure)
@@ -43,7 +46,10 @@ class QmpClientInstrumentationTest {
         }
 
         try {
-            assertEquals("connected status=running", QmpClient(LocalSocketAddress.Namespace.ABSTRACT).diagnosticProbe(socketName))
+            assertEquals(
+                "connected status=running vcpus=[0:halted=false:threadId=1234]",
+                QmpClient(LocalSocketAddress.Namespace.ABSTRACT).diagnosticProbe(socketName),
+            )
             serverThread.join(3_000)
             assertEquals(false, serverThread.isAlive)
             assertNull(serverFailure.get())

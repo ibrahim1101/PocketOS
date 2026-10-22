@@ -48,7 +48,7 @@ If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the installed PocketOS 
 
 Expected ABI: arm64-v8a. Android 16 may report release 16 or API level 36.
 
-Verify the runner is installed, then run the ARM64 QEMU executable check and full guest workflow independently. The guest test has a hard 12-minute timeout. It logs each stage, emits a 15-second heartbeat while waiting for guest serial output, and captures bounded QEMU thread state, cumulative CPU ticks and per-interval CPU deltas, serial output, stderr, exit status, and a read-only QMP status probe before forced cleanup. Procfs fields are best effort because Android may restrict them. Timeout diagnostics redact the ephemeral test password. The test uses an isolated temporary guest disk and never changes the user's persistent guest disk.
+Verify the runner is installed, then run the ARM64 QEMU executable check and full guest workflow independently. The guest test has an 8-minute independent watchdog plus a 12-minute JUnit ceiling. The watchdog runs on a daemon worker, captures diagnostics, force-stops every tracked QEMU process, and interrupts a blocked instrumentation wait. The test logs each stage and sanitized launch configuration, emits a 15-second heartbeat while waiting for guest serial output, and captures QEMU thread state, per-thread cumulative CPU ticks and deltas, wait channels, stdout/stderr tails, exit status, QMP VM status, and `query-cpus-fast` vCPU thread IDs/halted state before cleanup. Procfs fields are best effort; Android may restrict wait-channel names (the Vivo snapshot returned `0`). The launch summary redacts app-private filesystem paths and never includes the ephemeral test password. The test uses an isolated temporary guest disk and never changes the user's persistent guest disk.
 
 ```powershell
 $ResultsDir = Join-Path $ArtifactDir "device-results"
@@ -112,7 +112,7 @@ Review the files before sharing. Do not attach passwords, private keys, or an ex
 5. Persistence: the test performs QMP quit, boots the same isolated disk again, logs in, and verifies the setup marker and non-root account persist.
 6. Graceful shutdown: both QMP quit requests complete, QEMU exits with status 0, and disk leases release.
 7. Failure diagnostics and cleanup: Android instrumentation verifies stdout/stderr capture after a simulated guest boot failure, nonzero exit status, concurrent pipe closure during force-stop, and isolation from output-consumer exceptions.
-8. Bounded duration and cleanup: the complete Alpine workflow ends within 12 minutes. On failure it reports the last completed stage and sanitized bounded serial/stderr tails; QEMU is force-stopped if QMP shutdown did not complete.
+8. Bounded duration and cleanup: the complete Alpine workflow ends within the 8-minute independent watchdog deadline. On failure it reports the last completed stage and sanitized bounded serial/stderr tails; the watchdog force-stops QEMU even if the instrumentation thread is blocked, and the test also force-stops QEMU when QMP shutdown does not complete.
 9. Runtime gate: only successful QEMU execution and guest-boot tests record version-scoped evidence. If either ARM64 test fails or is skipped, the PocketOS start gate remains closed.
 
 Host QEMU and Android x86_64 emulator runs do not establish physical ARM64 compatibility. The Vivo test is the first device-level proof. Report actual outputs and failures before enabling real PocketOS sessions.
