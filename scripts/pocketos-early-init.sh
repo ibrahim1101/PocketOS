@@ -13,6 +13,11 @@ if ! awk '$2 == "/run" { found = 1 } END { exit !found }' /proc/mounts; then
   mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
 fi
 mkdir -p /run/lock /var/lib/pocketos
+# OpenRC is deferred until the first authenticated shell, so initialize the
+# configured hostname here for a stable serial login prompt and QEMU identity.
+if [ -r /etc/hostname ] && [ -s /etc/hostname ]; then
+  hostname "$(cat /etc/hostname)"
+fi
 # BusyBox init starts OpenRC asynchronously. Allow the first authenticated
 # pocketos login to release it without running device services before getty.
 (umask 000; : > /run/pocketos-user-login-ready)
