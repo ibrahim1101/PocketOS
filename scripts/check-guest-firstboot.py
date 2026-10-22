@@ -196,12 +196,19 @@ def main() -> int:
         stage = "authenticated user shell"
         wait_for(process, master_fd, buffer, b"$ ", args.timeout)
         if args.simulate_openrc_stall:
-            os.write(master_fd, b'test -f /run/pocketos-openrc-stall-active && echo __POCKETOS_OPENRC_STALL_ACTIVE__\n')
+            os.write(
+                master_fd,
+                b'i=0; while [ "$i" -lt 60 ]; do '
+                b'if test -f /run/pocketos-openrc-stall-active; then '
+                b'echo __POCKETOS_OPENRC_STALL_ACTIVE__; break; fi; '
+                b'sleep 1; i=$((i + 1)); done\n',
+            )
             stage = "serial login while OpenRC boot service is blocked"
-            wait_for(process, master_fd, buffer, b"__POCKETOS_OPENRC_STALL_ACTIVE__", args.timeout)
+            wait_for(process, master_fd, buffer, b"__POCKETOS_OPENRC_STALL_ACTIVE__", min(args.timeout, 75))
         os.write(
             master_fd,
             b'test "$(id -un)" = pocketos && test "$(id -u)" != 0 '
+            b'&& test -d "$HOME" && test "$PWD" = "$HOME" '
             b"&& echo __POCKETOS_USER_LOGIN_OK__\n",
         )
         stage = "non-root shell verification"

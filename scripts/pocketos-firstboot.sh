@@ -25,7 +25,6 @@ if [ ! -e "$marker" ]; then
       exit 1
     fi
   fi
-
   # passwd reads the new password twice from the controlling serial TTY with echo disabled.
   # Nothing secret is passed through argv, environment, files, or diagnostic output.
   until passwd pocketos; do
@@ -39,6 +38,11 @@ if [ ! -e "$marker" ]; then
   # Persist the password and completion marker before any restart can interrupt the guest.
   sync
   printf 'POCKETOS_FIRST_BOOT_COMPLETE\n'
+fi
+
+if id pocketos >/dev/null 2>&1; then
+  mkdir -p /home/pocketos
+  chown pocketos /home/pocketos
 fi
 
 exec /sbin/getty -L 115200 ttyAMA0 vt100
