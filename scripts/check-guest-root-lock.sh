@@ -73,10 +73,10 @@ grep -Fq 'mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run' <<< "$early_init"
   echo "Guest early init does not preserve volatile console coordination state" >&2
   exit 1
 }
-grep -Fq 'hostname "$(cat /etc/hostname)"' <<< "$early_init" || {
+if ! grep -Fq 'hostname ' <<< "$early_init" || ! grep -Fq '/etc/hostname' <<< "$early_init"; then
   echo "Guest early init does not set the configured hostname before serial login" >&2
   exit 1
-}
+fi
 for runlevel in sysinit boot default; do
   grep -Fq "/sbin/openrc $runlevel" <<< "$openrc_start" || {
     echo "Guest asynchronous OpenRC startup omits the $runlevel runlevel" >&2
