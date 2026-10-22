@@ -20,6 +20,24 @@ class NativeProcessSupervisor : GuestProcessLauncher {
         workingDirectory: File?,
         onSerialOutput: (ByteArray) -> Unit,
         onDiagnosticOutput: (ByteArray) -> Unit,
+    ): NativeProcessHandle = startProcess(command, workingDirectory, {}, onSerialOutput, onDiagnosticOutput)
+
+    /** Registers the child immediately after ProcessBuilder returns, before output pumps are started. */
+    @Synchronized
+    fun startSupervised(
+        command: List<String>,
+        workingDirectory: File? = null,
+        onProcessStarted: (NativeProcessHandle) -> Unit,
+        onSerialOutput: (ByteArray) -> Unit = {},
+        onDiagnosticOutput: (ByteArray) -> Unit = {},
+    ): NativeProcessHandle = startProcess(command, workingDirectory, onProcessStarted, onSerialOutput, onDiagnosticOutput)
+
+    private fun startProcess(
+        command: List<String>,
+        workingDirectory: File?,
+        onProcessStarted: (NativeProcessHandle) -> Unit,
+        onSerialOutput: (ByteArray) -> Unit,
+        onDiagnosticOutput: (ByteArray) -> Unit,
     ): NativeProcessHandle {
         require(command.isNotEmpty()) { "Native process command cannot be empty" }
         check(activeProcess?.isAlive != true) { "A native VM process is already running" }
@@ -32,9 +50,21 @@ class NativeProcessSupervisor : GuestProcessLauncher {
         activeProcess = process
         val pumpState = ProcessPumpState()
         val pumps = CountDownLatch(2)
+        val handle = NativeProcessHandle(process, pumpState, pumps)
+        try {
+            onProcessStarted(handle)
+        } catch (failure: Throwable) {
+            runCatching { handle.forceStop() }
+            runCatching { process.inputStream.close() }
+            runCatching { process.errorStream.close() }
+            runCatching { process.outputStream.close() }
+            pumps.countDown()
+            pumps.countDown()
+            throw failure
+        }
         pump(process, process.inputStream, "pocketos-serial", "stdout", pumpState, pumps, onSerialOutput, onDiagnosticOutput)
         pump(process, process.errorStream, "pocketos-qemu-log", "stderr", pumpState, pumps, onDiagnosticOutput, onDiagnosticOutput)
-        return NativeProcessHandle(process, pumpState, pumps)
+        return handle
     }
 
     fun isRunning(): Boolean = activeProcess?.isAlive == true

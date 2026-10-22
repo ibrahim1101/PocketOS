@@ -91,6 +91,26 @@ class QemuAndroidRuntimeInstrumentationTest {
     }
 
     @Test
+    fun supervisedStartRegistersChildBeforeOutputPumpsCanBlock() {
+        var registered: NativeProcessHandle? = null
+        var pumpsWereNotStartedAtRegistration = false
+        val handle = NativeProcessSupervisor().startSupervised(
+            command = listOf("/system/bin/sh", "-c", "exec sleep 30"),
+            onProcessStarted = { process ->
+                registered = process
+                pumpsWereNotStartedAtRegistration = !process.awaitOutputPumps(1, TimeUnit.MILLISECONDS)
+            },
+        )
+        try {
+            assertTrue("Child was not registered before startup returned", registered === handle)
+            assertTrue("Output pumps started before the watchdog could register the child", pumpsWereNotStartedAtRegistration)
+        } finally {
+            if (handle.isAlive) handle.forceStop(2, TimeUnit.SECONDS)
+            handle.awaitOutputPumps(2, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
     fun packagedArm64QemuRunsOnAndroid() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val qemu = packagedQemu(context)
@@ -264,12 +284,13 @@ class QemuAndroidRuntimeInstrumentationTest {
             hostHttpPort = (40_000..59_999).random(),
         )
         Log.i(TAG, "qemu launch ${launch.diagnosticSummary()}")
-        return NativeProcessSupervisor().start(
+        return NativeProcessSupervisor().startSupervised(
             command = launch.toCommand(),
             workingDirectory = context.filesDir,
+            onProcessStarted = { process -> activeProcesses += ActiveQemu(process, console, stderr) },
             onSerialOutput = console::receive,
             onDiagnosticOutput = stderr::append,
-        ).also { process -> activeProcesses += ActiveQemu(process, console, stderr) }
+        )
     }
 
     private fun freshValidationDisk(context: Context, id: String): File {
