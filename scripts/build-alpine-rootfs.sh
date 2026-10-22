@@ -41,7 +41,7 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   cat > /guest/etc/profile.d/pocketos-openrc.sh <<EOF
 # Release asynchronous OpenRC only after the first authenticated guest login.
 if [ "\$(id -un)" = pocketos ] && [ -w /run/pocketos-user-login-ready ]; then
-  printf 'ready\\n' > /run/pocketos-user-login-ready
+  echo ready > /run/pocketos-user-login-ready
 fi
 EOF
   chmod 644 /guest/etc/profile.d/pocketos-openrc.sh

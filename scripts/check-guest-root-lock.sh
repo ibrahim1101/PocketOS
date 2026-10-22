@@ -49,7 +49,7 @@ if ! grep -Fq 'id -un' <<< "$profile" || ! grep -Fq '= pocketos' <<< "$profile";
   echo "Guest login profile does not release OpenRC after authenticated PocketOS login" >&2
   exit 1
 fi
-grep -Fq "printf 'ready\\n' > /run/pocketos-user-login-ready" <<< "$profile" || {
+grep -Fq 'echo ready > /run/pocketos-user-login-ready' <<< "$profile" || {
   echo "Guest login profile does not publish the authenticated-login readiness marker" >&2
   exit 1
 }
