@@ -39,8 +39,8 @@ class QmpClient(
         if (socketName.isBlank()) return "unavailable(no-socket)"
         return try {
             LocalSocket().use { socket ->
-                socket.soTimeout = timeoutMillis
                 socket.connect(LocalSocketAddress(socketName, namespace))
+                socket.soTimeout = timeoutMillis
                 val reader = BufferedReader(InputStreamReader(socket.inputStream, Charsets.UTF_8))
                 val writer = BufferedWriter(OutputStreamWriter(socket.outputStream, Charsets.UTF_8))
                 val greeting = reader.readLine() ?: return "unavailable(no-greeting)"
