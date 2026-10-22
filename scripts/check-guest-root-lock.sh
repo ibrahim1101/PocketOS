@@ -38,8 +38,8 @@ grep -Fq "passwd pocketos" <<< "$setup" || {
   echo "Guest first-run account setup does not set a password interactively" >&2
   exit 1
 }
-grep -Fq ': > /run/pocketos-console-ready' <<< "$setup" || {
-  echo "Guest does not release OpenRC after serial setup reaches getty" >&2
+grep -Fq '( sleep 5; : > /run/pocketos-console-ready ) &' <<< "$setup" || {
+  echo "Guest does not defer OpenRC until getty establishes the serial login prompt" >&2
   exit 1
 }
 early_init="$(debugfs -R "cat /usr/local/sbin/pocketos-early-init" "$image" 2>/dev/null)"
