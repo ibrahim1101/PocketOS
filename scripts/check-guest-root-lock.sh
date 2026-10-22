@@ -45,10 +45,10 @@ if grep -Fq 'pocketos-console-ready' <<< "$setup"; then
   exit 1
 fi
 profile="$(debugfs -R "cat /etc/profile.d/pocketos-openrc.sh" "$image" 2>/dev/null)"
-grep -Fq 'id -un' <<< "$profile" && grep -Fq '= pocketos' <<< "$profile" || {
+if ! grep -Fq 'id -un' <<< "$profile" || ! grep -Fq '= pocketos' <<< "$profile"; then
   echo "Guest login profile does not release OpenRC after authenticated PocketOS login" >&2
   exit 1
-}
+fi
 grep -Fq "printf 'ready\\n' > /run/pocketos-user-login-ready" <<< "$profile" || {
   echo "Guest login profile does not publish the authenticated-login readiness marker" >&2
   exit 1
