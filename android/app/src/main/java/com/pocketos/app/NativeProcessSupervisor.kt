@@ -151,6 +151,8 @@ class NativeProcessHandle internal constructor(
             .flatMap { task -> readProcFile(File(task, "children")).split(Regex("\\s+")).asSequence() }
             .mapNotNull { it.toIntOrNull() }
             .distinct()
+            .take(MAX_DISCOVERED_CHILDREN)
+            .toList()
         val qemuProcesses = childPids.asSequence()
             .map { File("/proc/$it") }
             .filter { directory -> readProcFile(File(directory, "cmdline")).contains(QEMU_EXECUTABLE_MARKER) }
@@ -202,6 +204,7 @@ class NativeProcessHandle internal constructor(
     private fun readProcFile(file: File): String = runCatching { file.readText().trim() }.getOrElse { "unavailable" }
 
     private companion object {
+        const val MAX_DISCOVERED_CHILDREN = 16
         const val MAX_DIAGNOSTIC_THREADS = 8
         const val MAX_DIAGNOSTIC_PROCESSES = 2
         const val MAX_OWNER_THREADS = 64
