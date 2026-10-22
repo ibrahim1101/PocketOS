@@ -7,8 +7,10 @@ import os
 import pty
 import secrets
 import select
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -76,12 +78,58 @@ def stop(process, master_fd: int) -> None:
         os.close(master_fd)
 
 
+def prepare_openrc_stall_image(source: str, delay_seconds: int) -> str:
+    """Add a boot service that blocks OpenRC, proving it cannot hold up serial setup."""
+    if shutil.which("debugfs") is None:
+        raise RuntimeError("debugfs is required for the OpenRC stall regression")
+    fd, image = tempfile.mkstemp(prefix="pocketos-openrc-stall-", suffix=".ext4")
+    os.close(fd)
+    shutil.copyfile(source, image)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as service:
+        service.write(
+            "#!/sbin/openrc-run\n"
+            "depend() { before networking; }\n"
+            "start() { : > /run/pocketos-openrc-stall-active; sleep "
+            f"{delay_seconds}"
+            "; }\n"
+        )
+        service_path = service.name
+    try:
+        commands = [
+            f"write {service_path} /etc/init.d/pocketos-test-openrc-stall",
+            "set_inode_field /etc/init.d/pocketos-test-openrc-stall mode 0100755",
+            "symlink /etc/runlevels/boot/pocketos-test-openrc-stall /etc/init.d/pocketos-test-openrc-stall",
+            "stat /etc/runlevels/boot/pocketos-test-openrc-stall",
+        ]
+        for command in commands:
+            result = subprocess.run(
+                ["debugfs", "-w", "-R", command, image],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            if result.returncode != 0 or (command.startswith("stat ") and "Type: symlink" not in result.stdout):
+                raise RuntimeError("Could not prepare the blocked-OpenRC guest regression image")
+    except Exception:
+        os.unlink(image)
+        raise
+    finally:
+        os.unlink(service_path)
+    return image
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kernel", required=True)
     parser.add_argument("--initramfs", required=True)
     parser.add_argument("--rootfs", required=True)
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument(
+        "--simulate-openrc-stall",
+        action="store_true",
+        help="inject a blocked boot service and require serial setup to continue independently",
+    )
     args = parser.parse_args()
 
     for path in (args.kernel, args.initramfs, args.rootfs):
@@ -90,20 +138,34 @@ def main() -> int:
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
 
+    rootfs = args.rootfs
+    test_image = None
+    if args.simulate_openrc_stall:
+        test_image = prepare_openrc_stall_image(args.rootfs, max(args.timeout, 120))
+        rootfs = test_image
+
     # Ephemeral test credential; never printed, written to disk by the host, or added to argv.
     password = "P" + secrets.token_hex(12)
-    process, master_fd = launch(args.kernel, args.initramfs, args.rootfs)
+    process, master_fd = launch(args.kernel, args.initramfs, rootfs)
     buffer = bytearray()
+    first_boot_timeout = min(args.timeout, 15) if args.simulate_openrc_stall else args.timeout
+    first_boot_completed = False
     try:
-        wait_for(process, master_fd, buffer, b"New password:", args.timeout)
+        wait_for(process, master_fd, buffer, b"New password:", first_boot_timeout)
         os.write(master_fd, password.encode("ascii") + b"\n")
         wait_for(process, master_fd, buffer, b"Retype password:", args.timeout)
         os.write(master_fd, password.encode("ascii") + b"\n")
         wait_for(process, master_fd, buffer, b"pocketos login:", args.timeout)
+        first_boot_completed = True
     finally:
         stop(process, master_fd)
+        if test_image is not None and not first_boot_completed:
+            try:
+                os.unlink(test_image)
+            except FileNotFoundError:
+                pass
 
-    process, master_fd = launch(args.kernel, args.initramfs, args.rootfs)
+    process, master_fd = launch(args.kernel, args.initramfs, rootfs)
     buffer = bytearray()
     stage = "login prompt after restart"
     try:
@@ -114,6 +176,10 @@ def main() -> int:
         os.write(master_fd, password.encode("ascii") + b"\n")
         stage = "authenticated user shell"
         wait_for(process, master_fd, buffer, b"$ ", args.timeout)
+        if args.simulate_openrc_stall:
+            os.write(master_fd, b'test -f /run/pocketos-openrc-stall-active && echo __POCKETOS_OPENRC_STALL_ACTIVE__\n')
+            stage = "serial login while OpenRC boot service is blocked"
+            wait_for(process, master_fd, buffer, b"__POCKETOS_OPENRC_STALL_ACTIVE__", args.timeout)
         os.write(
             master_fd,
             b'test "$(id -un)" = pocketos && test "$(id -u)" != 0 '
@@ -127,8 +193,16 @@ def main() -> int:
         return 1
     finally:
         stop(process, master_fd)
+        if test_image is not None:
+            try:
+                os.unlink(test_image)
+            except FileNotFoundError:
+                pass
 
-    print("First-boot account setup and non-root serial login succeeded.")
+    if args.simulate_openrc_stall:
+        print("Serial setup and non-root login succeeded while an OpenRC boot service was blocked.")
+    else:
+        print("First-boot account setup and non-root serial login succeeded.")
     return 0
 
 

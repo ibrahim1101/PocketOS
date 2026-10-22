@@ -25,6 +25,14 @@ Get-Content (Join-Path $ArtifactDir "dist\SHA256SUMS")
 
 The workflow must show success before treating the APKs as a validated handoff. Check that build-info.txt contains the same commit SHA used in the artifact names. Use a successful **push** run from `feat/m1-linux-boot` for installable development updates. Pull-request runs use a disposable key and their artifact names end in `-pull-request`; those APKs cannot update an install signed by the branch key. The mismatch reported for the earlier test run came from installing a pull-request-signed artifact after a branch-signed build. The workflow now identifies the signing kind in build-info.txt and labels pull-request artifacts explicitly.
 
+For the consolidated physical check, use [`scripts/test-vivo.ps1`](../scripts/test-vivo.ps1). It downloads all three artifacts, requires a successful trusted push run from this branch, checks both APK SHA-256 hashes and signer fingerprints against CI metadata, installs without uninstalling anything, runs the native QEMU, real-QEMU watchdog, and full Alpine workflow tests under host-side timeouts, then creates one sanitized ZIP with instrumentation results, filtered logcat, process/service state, and the app-private watchdog journal. Example:
+
+```powershell
+.\scripts\test-vivo.ps1 -RunId 39775085373 -Serial "<Vivo ADB serial>"
+```
+
+If `-Serial` is omitted, the script requires exactly one online ADB device. A signing mismatch stops installation and preserves the existing app and guest data; resolve that signing transition separately rather than allowing the script to uninstall packages.
+
 Trusted pushes to `feat/m1-linux-boot` reuse one development debug signing key from the GitHub Actions cache. Pull-request builds intentionally use an isolated temporary key. CI records the certificate SHA-256 in build-info.txt and verifies that the app and instrumentation APKs share that certificate. If the installed APKs came from a pull-request build with a different key, uninstall both packages once before switching to trusted branch artifacts; this deletes PocketOS app data. Later trusted branch builds can be installed over them with `adb install -r`. The instrumentation APK must also come from the same workflow run as the app APK. This is a development signing identity, not a release key. GitHub may evict inactive caches, so compare the recorded fingerprint when upgrading; a changed fingerprint requires uninstalling both packages first.
 
 ## Install and run on the Vivo

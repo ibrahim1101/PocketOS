@@ -35,10 +35,24 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   printf "pocketos\n" > /guest/etc/hostname
   printf "auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet dhcp\n" > /guest/etc/network/interfaces
   mkdir -p /guest/usr/local/sbin
+  install -m 755 /source/scripts/pocketos-early-init.sh /guest/usr/local/sbin/pocketos-early-init
+  install -m 755 /source/scripts/pocketos-openrc-start.sh /guest/usr/local/sbin/pocketos-openrc-start
   install -m 755 /source/scripts/pocketos-firstboot.sh /guest/usr/local/sbin/pocketos-firstboot
-  printf "ttyAMA0::respawn:/usr/local/sbin/pocketos-firstboot\n" >> /guest/etc/inittab
+  # Establish a writable guest root before account setup, then keep OpenRC service
+  # startup off the synchronous BusyBox init sysinit path. A stalled optional boot
+  # service (notably Android-hosted user networking) must not hide the serial CLI.
+  cat > /guest/etc/inittab <<EOF
+::sysinit:/usr/local/sbin/pocketos-early-init
+::once:/usr/local/sbin/pocketos-openrc-start
+ttyAMA0::respawn:/usr/local/sbin/pocketos-firstboot
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/openrc shutdown
+EOF
   ln -sf /etc/init.d/networking /guest/etc/runlevels/boot/networking
   ln -sf /etc/init.d/hostname /guest/etc/runlevels/boot/hostname
+  ln -sf /etc/init.d/fsck /guest/etc/runlevels/boot/fsck
+  ln -sf /etc/init.d/root /guest/etc/runlevels/boot/root
+  ln -sf /etc/init.d/localmount /guest/etc/runlevels/boot/localmount
   ln -sf /etc/init.d/devfs /guest/etc/runlevels/sysinit/devfs
   ln -sf /etc/init.d/procfs /guest/etc/runlevels/sysinit/procfs
   ln -sf /etc/init.d/sysfs /guest/etc/runlevels/sysinit/sysfs

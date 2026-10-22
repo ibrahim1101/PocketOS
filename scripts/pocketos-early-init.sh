@@ -1,0 +1,16 @@
+#!/bin/sh
+# BusyBox init's sysinit hook. Make the persistent guest writable before
+# OpenRC or the first-run account setup can modify it.
+set -eu
+
+if ! mount -o remount,rw /; then
+  echo "PocketOS boot error: could not remount the guest root filesystem read/write" >/dev/console
+  exit 1
+fi
+
+mkdir -p /run
+if ! awk '$2 == "/run" { found = 1 } END { exit !found }' /proc/mounts; then
+  mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
+fi
+mkdir -p /run/lock /var/lib/pocketos
+echo "PocketOS: persistent root filesystem is writable" >/dev/console

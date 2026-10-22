@@ -228,6 +228,18 @@ jobs:
         run: |
           bash -n scripts/*.sh
           shellcheck scripts/*.sh
+      - name: Parse Windows physical-test handoff
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "scripts/test-vivo.ps1", [ref]$tokens, [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Fetch and verify pinned Android QEMU source
         run: |
           bash scripts/fetch-android-qemu-source.sh "$RUNNER_TEMP/qemu-11.1.2"
@@ -249,6 +261,14 @@ jobs:
           ROOTFS: ${{ runner.temp }}/alpine-aarch64.ext4
           BOOT_TIMEOUT_SECONDS: "120"
         run: bash scripts/check-guest-boot.sh
+      - name: Keep serial setup available during a blocked OpenRC boot service
+        run: >-
+          timeout --kill-after=10s 180s python3 scripts/check-guest-firstboot.py
+          --kernel "$RUNNER_TEMP/vmlinuz-virt"
+          --initramfs "$RUNNER_TEMP/initramfs-virt"
+          --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
+          --timeout 120
+          --simulate-openrc-stall
       - name: Exercise first-run account setup and non-root login
         run: >-
           python3 scripts/check-guest-firstboot.py

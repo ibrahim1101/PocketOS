@@ -649,6 +649,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             val failure = if (process.isAlive) "Timed out: $stage" else "Guest process exited before completing: $stage"
             throw AssertionError("$failure. ${diagnosticSummary(process, console, stderr)}")
         }
+        activeJournal?.record("guest-milestone", "stage=$stage ${diagnosticSummary(process, console, stderr)}")
         reportStage("Reached: $stage")
     }
 
