@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import pty
+import re
 import secrets
 import select
 import shutil
@@ -76,6 +77,15 @@ def stop(process, master_fd: int) -> None:
                 process.wait()
     finally:
         os.close(master_fd)
+
+
+def sanitized_serial_tail(buffer: bytearray, password: str, limit: int = 2400) -> str:
+    """Bound serial failure context and redact the ephemeral test credential."""
+    transcript = bytes(buffer).decode("utf-8", errors="replace")
+    transcript = transcript.replace(password, "[REDACTED]")
+    transcript = re.sub(r"(?i)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+", r"\1\2[REDACTED]", transcript)
+    transcript = re.sub(r"/(?:home/runner|tmp)/[^\s\r\n]+", "<host-path>", transcript)
+    return transcript[-limit:]
 
 
 def prepare_openrc_stall_image(source: str, delay_seconds: int) -> str:
@@ -150,13 +160,22 @@ def main() -> int:
     buffer = bytearray()
     first_boot_timeout = min(args.timeout, 15) if args.simulate_openrc_stall else args.timeout
     first_boot_completed = False
+    stage = "first-run password prompt"
     try:
         wait_for(process, master_fd, buffer, b"New password:", first_boot_timeout)
         os.write(master_fd, password.encode("ascii") + b"\n")
+        stage = "password confirmation"
         wait_for(process, master_fd, buffer, b"Retype password:", args.timeout)
         os.write(master_fd, password.encode("ascii") + b"\n")
+        stage = "first-run completion marker"
+        wait_for(process, master_fd, buffer, b"POCKETOS_FIRST_BOOT_COMPLETE", args.timeout)
+        stage = "initial login prompt"
         wait_for(process, master_fd, buffer, b"pocketos login:", args.timeout)
         first_boot_completed = True
+    except (RuntimeError, TimeoutError):
+        print(f"First-boot account setup failed at {stage}.", file=sys.stderr)
+        print(f"Sanitized serial tail: {sanitized_serial_tail(buffer, password)!r}", file=sys.stderr)
+        return 1
     finally:
         stop(process, master_fd)
         if test_image is not None and not first_boot_completed:
@@ -188,8 +207,8 @@ def main() -> int:
         stage = "non-root shell verification"
         wait_for(process, master_fd, buffer, b"__POCKETOS_USER_LOGIN_OK__", args.timeout)
     except (RuntimeError, TimeoutError):
-        # Do not print the serial transcript: it may contain terminal input on guest failure.
         print(f"First-boot account setup or non-root login failed at {stage}.", file=sys.stderr)
+        print(f"Sanitized serial tail: {sanitized_serial_tail(buffer, password)!r}", file=sys.stderr)
         return 1
     finally:
         stop(process, master_fd)
