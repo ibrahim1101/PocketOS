@@ -82,6 +82,22 @@ jobs:
         with:
           path: ~/.android/debug.keystore
           key: pocketos-debug-signing-v1-${{ github.ref_name }}
+      - name: Create debug signing key when cache is empty
+        run: |
+          set -euo pipefail
+          keystore="$HOME/.android/debug.keystore"
+          mkdir -p "$(dirname "$keystore")"
+          if [[ ! -s "$keystore" ]]; then
+            keytool -genkeypair -noprompt \
+              -keystore "$keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA -keysize 2048 -validity 10000
+          fi
+          chmod 600 "$keystore"
+          keytool -list -keystore "$keystore" -storepass android -alias androiddebugkey >/dev/null
       - name: Start Android x86_64 emulator
         run: |
           set -euxo pipefail
@@ -140,8 +156,10 @@ jobs:
           apksigner="$sdk_root/build-tools/35.0.0/apksigner"
           app_certificate="$("$apksigner" verify --print-certs "$app_apk" | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF}')"
           test_certificate="$("$apksigner" verify --print-certs "$test_apk" | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF}')"
+          keystore_certificate="$(keytool -exportcert -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | sha256sum | awk '{print $1}')"
           test -n "$app_certificate"
           test "$app_certificate" = "$test_certificate"
+          test "${app_certificate,,}" = "${keystore_certificate,,}"
           mkdir -p dist
           cp "$app_apk" dist/PocketOS-debug.apk
           cp "$test_apk" dist/PocketOS-androidTest.apk
