@@ -2,6 +2,7 @@ package com.pocketos.app
 
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
+import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
@@ -83,14 +84,15 @@ class QmpClient(
                 writer.write("{\"execute\":\"query-cpus-fast\"}\n")
                 writer.flush()
                 val cpuResponse = readCommandResponse(reader, "QMP query-cpus-fast")
-                val cpuIndices = QMP_CPU_INDEX.findAll(cpuResponse).map { it.groupValues[1] }.toList()
-                val haltedStates = QMP_CPU_HALTED.findAll(cpuResponse).map { it.groupValues[1] }.toList()
-                val threadIds = QMP_CPU_THREAD.findAll(cpuResponse).map { it.groupValues[1] }.toList()
-                val cpus = cpuIndices.indices.take(MAX_REPORTED_CPUS).joinToString(prefix = "[", postfix = "]") { index ->
-                    val halted = haltedStates.getOrNull(index) ?: "unknown"
-                    val threadId = threadIds.getOrNull(index) ?: "unknown"
-                    "${cpuIndices[index]}:halted=$halted:threadId=$threadId"
-                }
+                val cpuArray = JSONObject(cpuResponse).optJSONArray("return")
+                val cpus = (0 until minOf(cpuArray?.length() ?: 0, MAX_REPORTED_CPUS))
+                    .joinToString(prefix = "[", postfix = "]") { index ->
+                        val cpu = cpuArray!!.getJSONObject(index)
+                        val cpuIndex = cpu.optInt("cpu-index", index)
+                        val halted = cpu.opt("halted")?.toString() ?: "unknown"
+                        val threadId = cpu.opt("thread-id")?.toString() ?: "unknown"
+                        "$cpuIndex:halted=$halted:threadId=$threadId"
+                    }
                 "connected" + (status?.let { " status=$it" } ?: "") +
                     " vcpus=${if (cpus == "[]") "unavailable" else cpus}"
             }
@@ -113,9 +115,6 @@ class QmpClient(
 
     private companion object {
         val QMP_STATUS = Regex("\\\"status\\\"\\s*:\\s*\\\"([A-Za-z0-9_-]{1,32})\\\"")
-        val QMP_CPU_INDEX = Regex("\\\"cpu-index\\\"\\s*:\\s*(\\d+)")
-        val QMP_CPU_HALTED = Regex("\\\"halted\\\"\\s*:\\s*(true|false)")
-        val QMP_CPU_THREAD = Regex("\\\"thread-id\\\"\\s*:\\s*(\\d+)")
         const val MAX_REPORTED_CPUS = 8
         const val PROBE_CONNECT_MARGIN_MS = 500L
         val probeExecutor = Executors.newFixedThreadPool(2, ThreadFactory { task ->

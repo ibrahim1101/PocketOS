@@ -38,7 +38,7 @@ class QmpClientInstrumentationTest {
                     writer.write("{\"return\":{\"status\":\"running\",\"running\":true}}\n")
                     writer.flush()
                     assertEquals("{\"execute\":\"query-cpus-fast\"}", reader.readLine())
-                    writer.write("{\"return\":[{\"cpu-index\":0,\"properties\":{\"core-type\":\"core\"},\"thread-id\":1234,\"qom-path\":\"/machine/unattached/device[0]\",\"halted\":false}]}\n")
+                    writer.write("{\"return\":[{\"cpu-index\":0,\"properties\":{\"core-type\":\"core\",\"thread-id\":0},\"thread-id\":1234,\"qom-path\":\"/machine/unattached/device[0]\",\"halted\":false}]}\n")
                     writer.flush()
                 }
             } catch (failure: Throwable) {
