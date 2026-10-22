@@ -25,6 +25,8 @@ Get-Content (Join-Path $ArtifactDir "dist\SHA256SUMS")
 
 The workflow must show success before treating the APKs as a validated handoff. Check that build-info.txt contains the same commit SHA used in the artifact names.
 
+Trusted non-PR builds on the same branch reuse one development debug signing key from the GitHub Actions cache. CI records its certificate SHA-256 in build-info.txt and verifies that the app and instrumentation APKs share that certificate. After switching from an older APK signed by a different key, uninstall it once; later builds from this branch can be installed over the existing app with `adb install -r`. The instrumentation APK must also come from the same workflow run as the app APK. This is a development signing identity, not a release key. GitHub may evict inactive caches, so compare the recorded fingerprint when upgrading; a changed fingerprint requires uninstalling the old app first.
+
 ## Install and run on the Vivo
 
 Connect the intended phone, enable Developer options → USB debugging, approve the device prompt, and confirm Android reports the expected ARM64 device:
@@ -41,6 +43,8 @@ $TestApk = Join-Path $ArtifactDir "PocketOS-androidTest.apk"
 & $Adb -s $Serial install -r $AppApk
 & $Adb -s $Serial install -r $TestApk
 ```
+
+If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the installed PocketOS APK was signed by a different key. Uninstall PocketOS once, then install both APKs from the same CI run. This removes PocketOS app data, including the persistent guest disk, so export that disk first if it contains data you want to keep.
 
 Expected ABI: arm64-v8a. Android 16 may report release 16 or API level 36.
 

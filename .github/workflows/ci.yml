@@ -67,6 +67,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+      # Preserve the debug signing identity for trusted branch builds so successive
+      # development APKs can replace one another with `adb install -r`.
+      - name: Restore development debug signing key
+        if: github.event_name != 'pull_request'
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: pocketos-debug-signing-v1-${{ github.ref_name }}
       - name: Start Android x86_64 emulator
         run: |
           set -euxo pipefail
@@ -122,10 +130,15 @@ jobs:
             unzip -Z1 "$app_apk" | grep -Fx "$library"
           done
           unzip -Z1 "$test_apk" | grep -F "classes.dex"
+          apksigner="$sdk_root/build-tools/35.0.0/apksigner"
+          app_certificate="$("$apksigner" verify --print-certs "$app_apk" | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF}')"
+          test_certificate="$("$apksigner" verify --print-certs "$test_apk" | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF}')"
+          test -n "$app_certificate"
+          test "$app_certificate" = "$test_certificate"
           mkdir -p dist
           cp "$app_apk" dist/PocketOS-debug.apk
           cp "$test_apk" dist/PocketOS-androidTest.apk
-          printf 'commit=%s\n' '${{ github.event.pull_request.head.sha || github.sha }}' > dist/build-info.txt
+          printf 'commit=%s\nsigning-certificate-sha256=%s\n' '${{ github.event.pull_request.head.sha || github.sha }}' "$app_certificate" > dist/build-info.txt
           sha256sum dist/PocketOS-debug.apk dist/PocketOS-androidTest.apk > dist/SHA256SUMS
       - name: Verify packaged native library ABI and dependencies
         run: |
