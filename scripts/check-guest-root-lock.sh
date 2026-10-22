@@ -34,15 +34,37 @@ if grep -Eq '^::(sysinit|wait):/sbin/openrc (boot|default)' <<< "$inittab"; then
   exit 1
 fi
 setup="$(debugfs -R "cat /usr/local/sbin/pocketos-firstboot" "$image" 2>/dev/null)"
+early_init="$(debugfs -R "cat /usr/local/sbin/pocketos-early-init" "$image" 2>/dev/null)"
+openrc_start="$(debugfs -R "cat /usr/local/sbin/pocketos-openrc-start" "$image" 2>/dev/null)"
 grep -Fq "passwd pocketos" <<< "$setup" || {
   echo "Guest first-run account setup does not set a password interactively" >&2
   exit 1
 }
-grep -Fq '( sleep 5; : > /run/pocketos-console-ready ) &' <<< "$setup" || {
-  echo "Guest does not defer OpenRC until getty establishes the serial login prompt" >&2
+if grep -Fq 'pocketos-console-ready' <<< "$setup"; then
+  echo "OpenRC startup must not be released by a delay before successful login" >&2
+  exit 1
+fi
+profile="$(debugfs -R "cat /etc/profile.d/pocketos-openrc.sh" "$image" 2>/dev/null)"
+grep -Fq '"$(id -un)" = pocketos' <<< "$profile" || {
+  echo "Guest login profile does not release OpenRC after authenticated PocketOS login" >&2
   exit 1
 }
-early_init="$(debugfs -R "cat /usr/local/sbin/pocketos-early-init" "$image" 2>/dev/null)"
+grep -Fq "printf 'ready\\n' > /run/pocketos-user-login-ready" <<< "$profile" || {
+  echo "Guest login profile does not publish the authenticated-login readiness marker" >&2
+  exit 1
+}
+grep -Fq 'chmod 0666 /run/pocketos-user-login-ready' <<< "$early_init" || {
+  echo "Guest login readiness marker is not writable by the non-root PocketOS account" >&2
+  exit 1
+}
+if ! grep -Fq '/run/pocketos-user-login-ready' <<< "$openrc_start"; then
+  echo "OpenRC does not wait for successful authenticated login" >&2
+  exit 1
+fi
+if grep -Fq 'pocketos-console-ready' <<< "$openrc_start"; then
+  echo "OpenRC still starts based on an unauthenticated console-ready marker" >&2
+  exit 1
+fi
 grep -Fq "mount -o remount,rw /" <<< "$early_init" || {
   echo "Guest early init does not make the persistent root writable" >&2
   exit 1
@@ -51,17 +73,12 @@ grep -Fq 'mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run' <<< "$early_init"
   echo "Guest early init does not preserve volatile console coordination state" >&2
   exit 1
 }
-openrc_start="$(debugfs -R "cat /usr/local/sbin/pocketos-openrc-start" "$image" 2>/dev/null)"
 for runlevel in sysinit boot default; do
   grep -Fq "/sbin/openrc $runlevel" <<< "$openrc_start" || {
     echo "Guest asynchronous OpenRC startup omits the $runlevel runlevel" >&2
     exit 1
   }
 done
-grep -Fq '/run/pocketos-console-ready' <<< "$openrc_start" || {
-  echo "OpenRC starts before the serial setup has reached getty" >&2
-  exit 1
-}
 for service in fsck root localmount; do
   debugfs -R "stat /etc/runlevels/boot/$service" "$image" 2>/dev/null | grep -Fq 'Type: symlink' || {
     echo "Required writable-root service is not enabled in the boot runlevel: $service" >&2

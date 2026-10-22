@@ -41,8 +41,4 @@ if [ ! -e "$marker" ]; then
   printf 'POCKETOS_FIRST_BOOT_COMPLETE\n'
 fi
 
-mkdir -p /run
-# Let getty own the serial line and publish its login prompt before OpenRC can
-# touch device/run state or start potentially slow boot services.
-( sleep 5; : > /run/pocketos-console-ready ) &
 exec /sbin/getty -L 115200 ttyAMA0 vt100

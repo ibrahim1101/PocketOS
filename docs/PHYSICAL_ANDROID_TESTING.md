@@ -28,7 +28,8 @@ The workflow must show success before treating the APKs as a validated handoff. 
 For the consolidated physical check, use [`scripts/test-vivo.ps1`](../scripts/test-vivo.ps1). It downloads all three artifacts, requires a successful trusted push run from this branch, checks both APK SHA-256 hashes and signer fingerprints against CI metadata, installs without uninstalling anything, runs the native QEMU, real-QEMU watchdog, and full Alpine workflow tests under host-side timeouts, then creates one sanitized ZIP with instrumentation results, filtered logcat, process/service state, and the app-private watchdog journal. Example:
 
 ```powershell
-.\scripts\test-vivo.ps1 -RunId 39775085373 -Serial "<Vivo ADB serial>"
+$RunId = "<successful trusted push run ID>"
+.\scripts\test-vivo.ps1 -RunId $RunId -Serial "<Vivo ADB serial>"
 ```
 
 If `-Serial` is omitted, the script requires exactly one online ADB device. A signing mismatch stops installation and preserves the existing app and guest data; resolve that signing transition separately rather than allowing the script to uninstall packages.

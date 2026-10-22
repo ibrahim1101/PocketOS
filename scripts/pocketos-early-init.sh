@@ -13,4 +13,8 @@ if ! awk '$2 == "/run" { found = 1 } END { exit !found }' /proc/mounts; then
   mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
 fi
 mkdir -p /run/lock /var/lib/pocketos
+# BusyBox init starts OpenRC asynchronously. Allow the first authenticated
+# pocketos login to release it without running device services before getty.
+(umask 000; : > /run/pocketos-user-login-ready)
+chmod 0666 /run/pocketos-user-login-ready
 echo "PocketOS: persistent root filesystem is writable" >/dev/console

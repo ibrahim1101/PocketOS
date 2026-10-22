@@ -25,7 +25,7 @@ OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 echo "Building Alpine $ALPINE_TAG ARM64 disk ($SIZE_MB MiB)..."
 docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$ALPINE_REPOSITORY_BRANCH" -e OUTPUT_UID="$(id -u)" -e OUTPUT_GID="$(id -g)" -v "$(dirname "$OUT"):/output" -v "$SCRIPT_DIR:/source/scripts:ro" -e OUTPUT_NAME="$(basename "$OUT")" "alpine:$ALPINE_TAG" sh -euc '
   apk add --no-cache e2fsprogs
-  mkdir -p /guest/etc/apk/keys /guest/etc/network /guest/etc/runlevels/default /guest/etc/runlevels/boot /guest/etc/runlevels/sysinit
+  mkdir -p /guest/etc/apk/keys /guest/etc/network /guest/etc/profile.d /guest/etc/runlevels/default /guest/etc/runlevels/boot /guest/etc/runlevels/sysinit
   cp /etc/apk/keys/* /guest/etc/apk/keys/
   printf "https://dl-cdn.alpinelinux.org/alpine/%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/%s/community\n" "$ALPINE_REPOSITORY_BRANCH" "$ALPINE_REPOSITORY_BRANCH" > /guest/etc/apk/repositories
   apk --root /guest --initdb --arch aarch64 add --no-cache alpine-base openrc busybox-openrc busybox-extras util-linux e2fsprogs linux-virt
@@ -38,9 +38,16 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   install -m 755 /source/scripts/pocketos-early-init.sh /guest/usr/local/sbin/pocketos-early-init
   install -m 755 /source/scripts/pocketos-openrc-start.sh /guest/usr/local/sbin/pocketos-openrc-start
   install -m 755 /source/scripts/pocketos-firstboot.sh /guest/usr/local/sbin/pocketos-firstboot
+  cat > /guest/etc/profile.d/pocketos-openrc.sh <<EOF
+# Release asynchronous OpenRC only after the first authenticated guest login.
+if [ "\$(id -un)" = pocketos ] && [ -w /run/pocketos-user-login-ready ]; then
+  printf 'ready\\n' > /run/pocketos-user-login-ready
+fi
+EOF
+  chmod 644 /guest/etc/profile.d/pocketos-openrc.sh
   # Establish a writable guest root before account setup, then keep OpenRC service
-  # startup off the synchronous BusyBox init sysinit path. A stalled optional boot
-  # service (notably Android-hosted user networking) must not hide the serial CLI.
+  # startup off the serial first-boot path. OpenRC waits for the first authenticated
+  # pocketos shell so neither boot services nor device setup can hide the console.
   cat > /guest/etc/inittab <<EOF
 ::sysinit:/usr/local/sbin/pocketos-early-init
 ::once:/usr/local/sbin/pocketos-openrc-start

@@ -1,10 +1,10 @@
 #!/bin/sh
-# BusyBox init runs this as an asynchronous `once` action. Wait until first-run
-# account setup has reached getty before starting services; a slow service can
-# never block setup or the serial login console.
+# BusyBox init runs this as an asynchronous `once` action. Wait until the first
+# authenticated pocketos shell is ready before starting services; a slow
+# service can never block first-run setup, the login prompt, or that shell.
 set -eu
 
-while [ ! -e /run/pocketos-console-ready ]; do
+while ! grep -qx ready /run/pocketos-user-login-ready; do
   sleep 1
 done
 
