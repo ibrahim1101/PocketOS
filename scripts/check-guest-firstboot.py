@@ -171,6 +171,31 @@ def main() -> int:
         wait_for(process, master_fd, buffer, b"POCKETOS_FIRST_BOOT_COMPLETE", args.timeout)
         stage = "initial login prompt"
         wait_for(process, master_fd, buffer, b"pocketos login:", args.timeout)
+        os.write(master_fd, b"pocketos\n")
+        stage = "initial account password prompt"
+        wait_for(process, master_fd, buffer, b"Password:", args.timeout)
+        os.write(master_fd, password.encode("ascii") + b"\n")
+        stage = "initial authenticated shell"
+        wait_for(process, master_fd, buffer, b"$ ", args.timeout)
+        if args.simulate_openrc_stall:
+            os.write(
+                master_fd,
+                b'i=0; while [ "$i" -lt 60 ]; do '
+                b'if test -f /run/pocketos-openrc-stall-active; then '
+                b'echo __POCKETOS_OPENRC_STALL_ACTIVE__; break; fi; '
+                b'sleep 1; i=$((i + 1)); done\n',
+            )
+            stage = "initial login while OpenRC boot service is blocked"
+            wait_for(process, master_fd, buffer, b"__POCKETOS_OPENRC_STALL_ACTIVE__", min(args.timeout, 75))
+        os.write(
+            master_fd,
+            b'test "$(id -un)" = pocketos && test "$(id -u)" != 0 '
+            b'&& test -f /var/lib/pocketos/user-setup-complete '
+            b'&& printf "pocketos-persistence-v1\\n" > "$HOME/.pocketos-persistence-probe" '
+            b'&& sync && echo __POCKETOS_FIRST_LOGIN_SYNCED__\n',
+        )
+        stage = "first-login persistence write and sync"
+        wait_for(process, master_fd, buffer, b"__POCKETOS_FIRST_LOGIN_SYNCED__", args.timeout)
         first_boot_completed = True
     except (RuntimeError, TimeoutError):
         print(f"First-boot account setup failed at {stage}.", file=sys.stderr)
@@ -189,6 +214,8 @@ def main() -> int:
     stage = "login prompt after restart"
     try:
         wait_for(process, master_fd, buffer, b"pocketos login:", args.timeout)
+        if b"New password:" in buffer:
+            raise RuntimeError("first-run password setup repeated after restart")
         os.write(master_fd, b"pocketos\n")
         stage = "password prompt"
         wait_for(process, master_fd, buffer, b"Password:", args.timeout)
@@ -209,12 +236,14 @@ def main() -> int:
             master_fd,
             b'test "$(id -un)" = pocketos && test "$(id -u)" != 0 '
             b'&& test -d "$HOME" && test "$PWD" = "$HOME" '
-            b"&& echo __POCKETOS_USER_LOGIN_OK__\n",
+            b'&& test -f /var/lib/pocketos/user-setup-complete '
+            b'&& test "$(cat "$HOME/.pocketos-persistence-probe")" = pocketos-persistence-v1 '
+            b"&& echo __POCKETOS_PERSISTED_LOGIN_OK__\n",
         )
-        stage = "non-root shell verification"
-        wait_for(process, master_fd, buffer, b"__POCKETOS_USER_LOGIN_OK__", args.timeout)
+        stage = "persisted non-root shell, password, and file verification"
+        wait_for(process, master_fd, buffer, b"__POCKETOS_PERSISTED_LOGIN_OK__", args.timeout)
     except (RuntimeError, TimeoutError):
-        print(f"First-boot account setup or non-root login failed at {stage}.", file=sys.stderr)
+        print(f"First-boot setup or same-disk reboot verification failed at {stage}.", file=sys.stderr)
         print(f"Sanitized serial tail: {sanitized_serial_tail(buffer, password)!r}", file=sys.stderr)
         return 1
     finally:
@@ -226,9 +255,9 @@ def main() -> int:
                 pass
 
     if args.simulate_openrc_stall:
-        print("Serial setup and non-root login succeeded while an OpenRC boot service was blocked.")
+        print("First login and persisted second-boot login succeeded while an OpenRC boot service was blocked.")
     else:
-        print("First-boot account setup and non-root serial login succeeded.")
+        print("First-boot account setup, synced persistence file, and same-disk second-boot login succeeded.")
     return 0
 
 

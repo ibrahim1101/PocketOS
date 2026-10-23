@@ -67,6 +67,26 @@ function Invoke-Adb([string[]]$Arguments, [int]$TimeoutSeconds = 90) {
   return Invoke-Bounded $script:Adb $Arguments $TimeoutSeconds
 }
 
+function Stop-DeviceTestProcesses([string]$DeviceSerial) {
+  $actions = [System.Collections.Generic.List[string]]::new()
+  foreach ($package in @("com.pocketos.app.test", "com.pocketos.app")) {
+    $stop = Invoke-Adb @("-s", $DeviceSerial, "shell", "am", "force-stop", $package) 20
+    $actions.Add("force-stop $package exit=$($stop.ExitCode) timedOut=$($stop.TimedOut)")
+  }
+  # run-as limits this signal to PocketOS's UID, so a host timeout can clear a
+  # native child even if force-stopping the app package did not reap it.
+  $kill = Invoke-Adb @(
+    "-s", $DeviceSerial, "shell", "run-as", "com.pocketos.app", "sh", "-c",
+    'for pid in $(pidof libqemu-system-aarch64.so 2>/dev/null); do kill -KILL "$pid" 2>/dev/null || true; done'
+  ) 20
+  $actions.Add("qemu-child-cleanup exit=$($kill.ExitCode) timedOut=$($kill.TimedOut)")
+  $state = Invoke-Adb @("-s", $DeviceSerial, "shell", "ps", "-A") 20
+  $remaining = @($state.Output -split '\r?\n' | Where-Object { $_ -match 'libqemu-system-aarch64\.so' })
+  $actions.Add("remaining-qemu=$($remaining.Count)")
+  $actions.AddRange([string[]]$remaining)
+  return ($actions -join [Environment]::NewLine)
+}
+
 function Save-Text([string]$Name, [string]$Text) {
   $path = Join-Path $OutputDirectory $Name
   $safe = $Text -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
@@ -163,7 +183,10 @@ try {
     Save-Text "$($test.Name).txt" $output.Output | Out-Null
     $passed = -not $output.TimedOut -and $output.ExitCode -eq 0 -and $output.Output -match 'OK \(1 test\)'
     $Results.Add([pscustomobject]@{ Test = $test.Name; Result = if ($passed) { "PASS" } else { "FAIL" }; ExitCode = $output.ExitCode; TimedOut = $output.TimedOut })
-    if (-not $passed) { $Failed.Add($test.Name) }
+    if (-not $passed) {
+      $Failed.Add($test.Name)
+      Save-Text "timeout-cleanup-$($test.Name).txt" (Stop-DeviceTestProcesses $Serial) | Out-Null
+    }
   }
 
   $logcat = Invoke-Adb @("-s", $Serial, "logcat", "-d", "-v", "threadtime") 60

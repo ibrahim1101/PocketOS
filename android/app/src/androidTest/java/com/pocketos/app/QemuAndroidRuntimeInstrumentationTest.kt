@@ -403,16 +403,17 @@ class QemuAndroidRuntimeInstrumentationTest {
         val installed = GuestAssetInstaller.forContext(context).install()
         assertTrue("App-private persistent disk was not initialized as ext4", isExt4(installed.rootDisk))
         val disk = freshValidationDisk(context, validationId)
-        val qmpSocket = File(context.filesDir, "qmp-v-$validationId.sock")
+        val firstQmpSocket = File(context.filesDir, "qmp-v-$validationId-first.sock")
+        val secondQmpSocket = File(context.filesDir, "qmp-v-$validationId-second.sock")
         val password = UUID.randomUUID().toString().replace("-", "").take(18)
         try {
             reportStage("Creating an isolated copy of the Alpine seed disk")
             val firstLease = GuestDiskLease.acquire(disk)
             var firstProcess: NativeProcessHandle? = null
-            val firstConsole = SerialCapture(password, qmpSocket)
+            val firstConsole = SerialCapture(password, firstQmpSocket)
             val firstStderr = BoundedDiagnosticCapture()
             try {
-                firstProcess = startGuest(context, installed, disk, qmpSocket, firstConsole, firstStderr, activeProcesses, watchdog)
+                firstProcess = startGuest(context, installed, disk, firstQmpSocket, firstConsole, firstStderr, activeProcesses, watchdog)
                 awaitStage("Waiting for the first-run password prompt", "New password:", firstConsole, firstProcess, firstStderr, GUEST_BOOT_TIMEOUT_MS)
                 assertTrue("Guest readiness probe did not recognize first-run readiness", firstConsole.probe.isReady)
                 reportStage("Submitting an ephemeral password to the isolated guest disk")
@@ -427,23 +428,25 @@ class QemuAndroidRuntimeInstrumentationTest {
                 awaitStage("Waiting for the account password prompt", "Password:", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
                 firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
                 awaitStage("Waiting for the account shell", "$ ", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
-                verifyGuestAccountAndPersistentMarker(firstConsole, firstProcess, firstStderr)
+                verifyGuestAccountAndPersistentMarker(firstConsole, firstProcess, firstStderr, writePersistenceProbe = true)
                 synchronizeGuestDisk(firstProcess, firstConsole, firstStderr)
-                gracefulQmpShutdown(firstProcess, qmpSocket, firstConsole, firstStderr)
+                gracefulQmpShutdown(firstProcess, firstQmpSocket, firstConsole, firstStderr)
             } finally {
                 stopIfStillRunning("first boot", firstProcess, firstConsole, firstStderr)
                 runCatching { firstLease.close() }
-                runCatching { qmpSocket.delete() }
+                runCatching { firstQmpSocket.delete() }
             }
 
             reportStage("Rebooting the isolated disk to verify persisted credentials and marker")
             val secondLease = GuestDiskLease.acquire(disk)
             var secondProcess: NativeProcessHandle? = null
-            val secondConsole = SerialCapture(password, qmpSocket)
+            val secondConsole = SerialCapture(password, secondQmpSocket)
             val secondStderr = BoundedDiagnosticCapture()
             try {
-                secondProcess = startGuest(context, installed, disk, qmpSocket, secondConsole, secondStderr, activeProcesses, watchdog)
+                reportStage("Launching a fresh QEMU process against the released persistent disk")
+                secondProcess = startGuest(context, installed, disk, secondQmpSocket, secondConsole, secondStderr, activeProcesses, watchdog)
                 awaitStage("Waiting for login after restart", "pocketos login:", secondConsole, secondProcess, secondStderr, GUEST_BOOT_TIMEOUT_MS)
+                assertFalse("First-run password setup repeated after restart", secondConsole.diagnosticTail().contains("New password:"))
                 assertTrue("Readiness probe did not recognize login readiness", secondConsole.probe.isReady)
 
                 secondProcess.writeSerial("pocketos\n".toByteArray(Charsets.UTF_8))
@@ -452,11 +455,11 @@ class QemuAndroidRuntimeInstrumentationTest {
                 awaitStage("Waiting for the persisted account shell", "$ ", secondConsole, secondProcess, secondStderr, PROMPT_TIMEOUT_MS)
                 verifyGuestAccountAndPersistentMarker(secondConsole, secondProcess, secondStderr)
                 synchronizeGuestDisk(secondProcess, secondConsole, secondStderr)
-                gracefulQmpShutdown(secondProcess, qmpSocket, secondConsole, secondStderr)
+                gracefulQmpShutdown(secondProcess, secondQmpSocket, secondConsole, secondStderr)
             } finally {
                 stopIfStillRunning("second boot", secondProcess, secondConsole, secondStderr)
                 runCatching { secondLease.close() }
-                runCatching { qmpSocket.delete() }
+                runCatching { secondQmpSocket.delete() }
             }
         } finally {
             runCatching { disk.delete() }
@@ -470,10 +473,17 @@ class QemuAndroidRuntimeInstrumentationTest {
         console: SerialCapture,
         process: NativeProcessHandle,
         stderr: BoundedDiagnosticCapture,
+        writePersistenceProbe: Boolean = false,
     ) {
+        val persistenceProbe = if (writePersistenceProbe) {
+            "printf 'pocketos-persistence-v1\\n' > \"\$HOME/.pocketos-persistence-probe\""
+        } else {
+            "test \"\$(cat \"\$HOME/.pocketos-persistence-probe\")\" = pocketos-persistence-v1"
+        }
         val command =
             "test \"$(id -un)\" = pocketos && test \"$(id -u)\" != 0 && " +
-                "test -f /var/lib/pocketos/user-setup-complete && echo __POCKETOS_ACCOUNT_AND_DISK_OK__\n"
+                "test -f /var/lib/pocketos/user-setup-complete && $persistenceProbe && " +
+                "echo __POCKETOS_ACCOUNT_AND_DISK_OK__\n"
         process.writeSerial(command.toByteArray(Charsets.UTF_8))
         awaitStage("Checking non-root identity and persistent first-run marker", "__POCKETOS_ACCOUNT_AND_DISK_OK__", console, process, stderr, PROMPT_TIMEOUT_MS)
     }
@@ -503,6 +513,10 @@ class QemuAndroidRuntimeInstrumentationTest {
         }
         assertTrue("QEMU did not exit after QMP quit. ${diagnosticSummary(process, console, stderr)}", process.awaitExit(QMP_EXIT_TIMEOUT_MS, TimeUnit.SECONDS))
         assertEquals("QEMU did not exit cleanly after QMP quit", 0, process.exitCode)
+        assertTrue(
+            "QEMU output pumps remained active after shutdown",
+            process.awaitOutputPumps(OUTPUT_PUMP_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+        )
         reportStage("QEMU exited cleanly through QMP")
     }
 
@@ -772,9 +786,10 @@ class QemuAndroidRuntimeInstrumentationTest {
         private const val MAX_FAILURE_TAIL_CHARS = 2_048
         private const val MAX_PROCESS_SNAPSHOT_CHARS = 4_096
         private const val CLEANUP_TIMEOUT_SECONDS = 10L
+        private const val OUTPUT_PUMP_EXIT_TIMEOUT_SECONDS = 5L
         private const val WATCHDOG_KILL_TIMEOUT_SECONDS = 2L
         private const val DIAGNOSTIC_SNAPSHOT_TIMEOUT_MS = 2_000L
-        private const val HEARTBEAT_INTERVAL_MS = 15_000L
+        private const val HEARTBEAT_INTERVAL_MS = 5_000L
         private const val REAL_QEMU_STALL_TIMEOUT_MS = 5_000L
         private const val REAL_QEMU_STALL_HEARTBEAT_MS = 1_000L
         private const val REAL_QEMU_STALL_TEST_CEILING_MS = 20_000L
