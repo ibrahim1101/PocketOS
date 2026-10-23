@@ -151,7 +151,7 @@ class NativeProcessHandle internal constructor(
         childPids.firstOrNull { candidate ->
             val proc = File("/proc/$candidate")
             if (!proc.isDirectory) return@firstOrNull false
-            val args = readProcFile(File(proc, "cmdline")).split('\\u0000')
+            val args = readProcFile(File(proc, "cmdline")).split(Regex("\\u0000"))
             val processName = args.firstOrNull()?.let(::File)?.name.orEmpty()
             val state = readCpuStatState(File(proc, "stat"))
             processName == expectedName && state != "Z"
