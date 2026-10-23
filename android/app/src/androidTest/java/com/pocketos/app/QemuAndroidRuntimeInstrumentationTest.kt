@@ -30,6 +30,19 @@ import java.util.zip.GZIPInputStream
 
 @RunWith(AndroidJUnit4::class)
 class QemuAndroidRuntimeInstrumentationTest {
+    @Test
+    fun cpuExecutionLeaseKeepsCpuAwakeUntilClosed() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val lease = CpuExecutionLease(context, "$TAG:wake-lock-test", fallbackTimeoutMs = 5_000)
+        try {
+            lease.acquire()
+            assertTrue("CPU execution lease did not acquire its partial wake lock", lease.isHeld)
+        } finally {
+            lease.close()
+        }
+        assertFalse("CPU execution lease did not release its partial wake lock", lease.isHeld)
+    }
+
     @Volatile
     private var activeJournal: RuntimeTestJournal? = null
 
@@ -309,6 +322,8 @@ class QemuAndroidRuntimeInstrumentationTest {
     @Test(timeout = MAX_GUEST_TEST_DURATION_MS)
     fun bootsFreshAlpineSetsPasswordLogsInPersistsAndQuitsThroughQmp() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val cpuExecutionLease = CpuExecutionLease(context, "$TAG:physical-guest-test")
+        cpuExecutionLease.acquire()
         val validationId = UUID.randomUUID().toString().replace("-", "")
         val activeProcesses = Collections.synchronizedList(mutableListOf<ActiveQemu>())
         val testThread = Thread.currentThread()
@@ -367,6 +382,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             journal.record("test-finished", "stage=$activeStage")
             activeJournal = null
             activeStage = "not-running"
+            cpuExecutionLease.close()
         }
     }
 
@@ -412,6 +428,7 @@ class QemuAndroidRuntimeInstrumentationTest {
                 firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
                 awaitStage("Waiting for the account shell", "$ ", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
                 verifyGuestAccountAndPersistentMarker(firstConsole, firstProcess, firstStderr)
+                synchronizeGuestDisk(firstProcess, firstConsole, firstStderr)
                 gracefulQmpShutdown(firstProcess, qmpSocket, firstConsole, firstStderr)
             } finally {
                 stopIfStillRunning("first boot", firstProcess, firstConsole, firstStderr)
@@ -434,6 +451,7 @@ class QemuAndroidRuntimeInstrumentationTest {
                 secondProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
                 awaitStage("Waiting for the persisted account shell", "$ ", secondConsole, secondProcess, secondStderr, PROMPT_TIMEOUT_MS)
                 verifyGuestAccountAndPersistentMarker(secondConsole, secondProcess, secondStderr)
+                synchronizeGuestDisk(secondProcess, secondConsole, secondStderr)
                 gracefulQmpShutdown(secondProcess, qmpSocket, secondConsole, secondStderr)
             } finally {
                 stopIfStillRunning("second boot", secondProcess, secondConsole, secondStderr)
@@ -458,6 +476,17 @@ class QemuAndroidRuntimeInstrumentationTest {
                 "test -f /var/lib/pocketos/user-setup-complete && echo __POCKETOS_ACCOUNT_AND_DISK_OK__\n"
         process.writeSerial(command.toByteArray(Charsets.UTF_8))
         awaitStage("Checking non-root identity and persistent first-run marker", "__POCKETOS_ACCOUNT_AND_DISK_OK__", console, process, stderr, PROMPT_TIMEOUT_MS)
+    }
+
+    /** Flush guest writes before QMP quit so the persistence reboot tests a stable ext4 image. */
+    private fun synchronizeGuestDisk(
+        process: NativeProcessHandle,
+        console: SerialCapture,
+        stderr: BoundedDiagnosticCapture,
+    ) {
+        val marker = "__POCKETOS_GUEST_SYNC_COMPLETE__"
+        process.writeSerial("sync && echo $marker\n".toByteArray(Charsets.UTF_8))
+        awaitStage("Waiting for guest filesystem sync", marker, console, process, stderr, PROMPT_TIMEOUT_MS)
     }
 
     private fun gracefulQmpShutdown(
@@ -703,8 +732,8 @@ class QemuAndroidRuntimeInstrumentationTest {
         try {
             val snapshot = runCatching { diagnosticSummary(process, console, stderr) }
                 .getOrElse { "diagnosticsUnavailable(${it.javaClass.simpleName}); exitStatus=${process.exitStatusLabel()}" }
-            runCatching { reportStage("Forcibly stopping QEMU after $stage did not shut down cleanly") }
-            Log.e(TAG, "pre-force-stop stage=$stage $snapshot")
+            // Kill before reporting through the instrumentation status channel. ADB or
+            // the host runner can stop consuming that channel while a timeout unwinds.
             val stopped = runCatching {
                 process.forceStop(timeout = CLEANUP_TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
             }.getOrElse {
@@ -712,6 +741,8 @@ class QemuAndroidRuntimeInstrumentationTest {
                 false
             }
             val pumpsStopped = runCatching { process.awaitOutputPumps(2, TimeUnit.SECONDS) }.getOrDefault(false)
+            runCatching { reportStage("Forcibly stopped QEMU after $stage did not shut down cleanly") }
+            Log.e(TAG, "pre-force-stop stage=$stage $snapshot")
             Log.i(TAG, "QEMU cleanup stage=$stage stopped=$stopped exitStatus=${process.exitStatusLabel()} outputPumpsStopped=$pumpsStopped")
         } finally {
             if (wasInterrupted) Thread.currentThread().interrupt()
