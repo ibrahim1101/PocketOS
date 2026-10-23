@@ -170,12 +170,40 @@ class QemuAndroidRuntimeInstrumentationTest {
         val journal = RuntimeTestJournal(context, runId)
         try {
             journal.record("stage", "password=not-for-logs path=${context.filesDir.absolutePath}/guest.img")
-            val contents = journal.file.readText(Charsets.UTF_8)
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+            var contents = ""
+            while (!contents.contains("guest.img") && System.nanoTime() < deadline) {
+                contents = if (journal.file.isFile) journal.file.readText(Charsets.UTF_8) else ""
+                if (!contents.contains("guest.img")) Thread.sleep(10)
+            }
+            assertTrue("Journal writer did not persist its queued stage", contents.contains("guest.img"))
             assertTrue("Journal has no timestamp", contents.contains(Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z")))
             assertTrue("Journal did not redact the password", contents.contains("password=[REDACTED]"))
             assertFalse("Journal exposed a private app path", contents.contains(context.filesDir.absolutePath))
             assertTrue("Journal did not persist the stage", contents.contains("<app-private>/guest.img"))
         } finally {
+            journal.file.delete()
+        }
+    }
+
+    @Test
+    fun blockedRuntimeJournalStorageCannotBlockStageOrWatchdogCallers() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val writerStarted = CountDownLatch(1)
+        val releaseWriter = CountDownLatch(1)
+        val journal = RuntimeTestJournal(context, "blocked-${UUID.randomUUID()}") { _, _ ->
+            writerStarted.countDown()
+            releaseWriter.await(10, TimeUnit.SECONDS)
+        }
+        try {
+            journal.record("heartbeat", "stage=serial-wait")
+            assertTrue("Journal writer did not reach the simulated storage stall", writerStarted.await(2, TimeUnit.SECONDS))
+            val startedAt = System.nanoTime()
+            journal.record("watchdog-timeout", "stage=serial-wait killed=1/1")
+            val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+            assertTrue("A blocked journal writer stalled the watchdog caller for ${elapsedMs}ms", elapsedMs < 250)
+        } finally {
+            releaseWriter.countDown()
             journal.file.delete()
         }
     }
