@@ -26,6 +26,7 @@ import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.GZIPInputStream
 
@@ -393,13 +394,14 @@ class QemuAndroidRuntimeInstrumentationTest {
             if (active.isEmpty()) {
                 journal.record("heartbeat", "stage=$activeStage qemu=not-yet-started")
             } else {
-                active.forEach { guest ->
-                    val snapshot = runCatching {
-                        diagnosticSummary(guest.process, guest.console, guest.stderr)
-                    }.getOrElse { "exitStatus=${guest.process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
-                    journal.record("heartbeat", "stage=$activeStage $snapshot")
-                    Log.i(TAG, "independent heartbeat stage=$activeStage $snapshot")
-                }
+                val guest = active.lastOrNull { it.process.isAlive } ?: active.last()
+                val snapshot = runCatching {
+                    diagnosticSummary(guest.process, guest.console, guest.stderr, includeSerialTail = false)
+                }.getOrElse { "exitStatus=${guest.process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
+                journal.record("heartbeat", "stage=$activeStage $snapshot")
+                // Keep serial tails and procfs thread detail in the bounded private journal.
+                // Repeating multi-kilobyte snapshots in logcat can evict the final failure.
+                Log.i(TAG, "independent heartbeat stage=$activeStage exitStatus=${guest.process.exitStatusLabel()} ${guest.console.progressSummary()}")
             }
         }
 
@@ -650,10 +652,14 @@ class QemuAndroidRuntimeInstrumentationTest {
     private class SerialCapture(private val password: String, val qmpSocket: File) {
         private val lock = Object()
         private val capture = BoundedDiagnosticCapture(MAX_DIAGNOSTIC_CHARS).apply { redact(password) }
+        private val receivedBytes = AtomicLong(0)
+        private val lastOutputNanos = AtomicLong(0)
         val probe = GuestReadinessProbe()
 
         fun receive(bytes: ByteArray) {
             probe.onSerialOutput(bytes)
+            receivedBytes.addAndGet(bytes.size.toLong())
+            lastOutputNanos.set(System.nanoTime())
             synchronized(lock) {
                 capture.append(bytes)
                 lock.notifyAll()
@@ -679,6 +685,14 @@ class QemuAndroidRuntimeInstrumentationTest {
         }
 
         fun diagnosticTail(): String = capture.snapshot()
+
+        fun progressSummary(): String {
+            val lastOutput = lastOutputNanos.get()
+            val ageMs = if (lastOutput == 0L) "never" else {
+                TimeUnit.NANOSECONDS.toMillis((System.nanoTime() - lastOutput).coerceAtLeast(0)).toString()
+            }
+            return "serialBytes=${receivedBytes.get()} lastSerialAgeMs=$ageMs readiness=${probe.isReady}"
+        }
     }
 
     private data class ActiveQemu(
@@ -760,8 +774,9 @@ class QemuAndroidRuntimeInstrumentationTest {
         process: NativeProcessHandle,
         console: SerialCapture,
         stderr: BoundedDiagnosticCapture,
+        includeSerialTail: Boolean = true,
     ): String {
-        val task = FutureTask { collectDiagnosticSummary(process, console, stderr) }
+        val task = FutureTask { collectDiagnosticSummary(process, console, stderr, includeSerialTail) }
         Thread(task, "pocketos-diagnostic-snapshot").apply {
             isDaemon = true
             start()
@@ -780,15 +795,20 @@ class QemuAndroidRuntimeInstrumentationTest {
         process: NativeProcessHandle,
         console: SerialCapture,
         stderr: BoundedDiagnosticCapture,
+        includeSerialTail: Boolean,
     ): String {
         val processState = runCatching { process.diagnosticSnapshot() }
             .getOrElse { "qemuProcfs=unavailable(${it.javaClass.simpleName})" }
             .take(MAX_PROCESS_SNAPSHOT_CHARS)
         val qmpState = QmpClient().diagnosticProbe(console.qmpSocket.absolutePath)
-        val serialTail = console.diagnosticTail().takeLast(MAX_FAILURE_TAIL_CHARS)
-        val stderrTail = stderr.snapshot().takeLast(MAX_FAILURE_TAIL_CHARS)
-        return "exitStatus=${process.exitStatusLabel()}; $processState; qmp=$qmpState; " +
-            "serialTail=$serialTail; qemuStderrTail=$stderrTail"
+        val tails = if (includeSerialTail) {
+            val serialTail = console.diagnosticTail().takeLast(MAX_FAILURE_TAIL_CHARS)
+            val stderrTail = stderr.snapshot().takeLast(MAX_FAILURE_TAIL_CHARS)
+            "; serialTail=$serialTail; qemuStderrTail=$stderrTail"
+        } else {
+            "; ${console.progressSummary()}"
+        }
+        return "exitStatus=${process.exitStatusLabel()}; $processState; qmp=$qmpState$tails"
     }
 
     private fun stopIfStillRunning(
