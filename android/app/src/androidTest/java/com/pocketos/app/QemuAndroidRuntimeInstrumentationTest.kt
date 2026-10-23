@@ -697,19 +697,24 @@ class QemuAndroidRuntimeInstrumentationTest {
     ) {
         val waiting = AtomicBoolean(true)
         val deadlineExpired = AtomicBoolean(false)
+        val deadlineCallbackDone = CountDownLatch(1)
         val owner = Thread.currentThread()
         val deadline = IndependentWatchdog(timeoutMs) {
             if (waiting.compareAndSet(true, false)) {
                 deadlineExpired.set(true)
-                runCatching { process.expectOutputClosure() }
-                val stopped = runCatching {
-                    process.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                }.getOrDefault(false)
-                owner.interrupt()
-                val snapshot = runCatching { diagnosticSummary(process, console, stderr) }
-                    .getOrElse { "exitStatus=${process.exitStatusLabel()} diagnosticsUnavailable(${it.javaClass.simpleName})" }
-                activeJournal?.record("stage-deadline", "stage=$stage stopped=$stopped $snapshot")
-                Log.e(TAG, "stage deadline expired stage=$stage stopped=$stopped $snapshot")
+                try {
+                    runCatching { process.expectOutputClosure() }
+                    val stopped = runCatching {
+                        process.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    }.getOrDefault(false)
+                    owner.interrupt()
+                    val snapshot = runCatching { diagnosticSummary(process, console, stderr) }
+                        .getOrElse { "exitStatus=${process.exitStatusLabel()} diagnosticsUnavailable(${it.javaClass.simpleName})" }
+                    activeJournal?.record("stage-deadline", "stage=$stage stopped=$stopped $snapshot")
+                    Log.e(TAG, "stage deadline expired stage=$stage stopped=$stopped $snapshot")
+                } finally {
+                    deadlineCallbackDone.countDown()
+                }
             }
         }
         val reached = try {
@@ -726,10 +731,25 @@ class QemuAndroidRuntimeInstrumentationTest {
         } finally {
             waiting.set(false)
             deadline.close()
+            if (deadlineExpired.get()) {
+                val cleanupDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                while (deadlineCallbackDone.count > 0 && System.nanoTime() < cleanupDeadline) {
+                    try {
+                        deadlineCallbackDone.await(
+                            (cleanupDeadline - System.nanoTime()).coerceAtLeast(1),
+                            TimeUnit.NANOSECONDS,
+                        )
+                    } catch (_: InterruptedException) {
+                        // Consume the deadline interrupt and wait for the callback to finish so
+                        // the instrumentation runner cannot inherit it in the next test.
+                    }
+                }
+                Thread.interrupted()
+            }
         }
         if (!reached) {
             if (!process.isAlive) process.awaitOutputPumps(2, TimeUnit.SECONDS)
-            val failure = if (process.isAlive) "Timed out: $stage" else "Guest process exited before completing: $stage"
+            val failure = if (deadlineExpired.get() || process.isAlive) "Timed out: $stage" else "Guest process exited before completing: $stage"
             throw AssertionError("$failure. ${diagnosticSummary(process, console, stderr)}")
         }
         activeJournal?.record("guest-milestone", "stage=$stage ${diagnosticSummary(process, console, stderr)}")
