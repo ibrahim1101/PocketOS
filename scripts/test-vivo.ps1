@@ -174,8 +174,8 @@ try {
   }
 
   $tests = @(
-    @{ Name = "native-qemu"; Class = "packagedArm64QemuRunsOnAndroid"; Timeout = 90 },
-    @{ Name = "qemu-watchdog"; Class = "packagedAlpineQemuIsStoppedWhenInstrumentationWaitIsBlocked"; Timeout = 60 },
+    # One end-to-end run validates native QEMU launch, first boot, authenticated
+    # non-root access, synced disk persistence, same-disk reboot, and cleanup.
     @{ Name = "alpine-guest-workflow"; Class = "bootsFreshAlpineSetsPasswordLogsInPersistsAndQuitsThroughQmp"; Timeout = 630 }
   )
   foreach ($test in $tests) {

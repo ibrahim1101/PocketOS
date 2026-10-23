@@ -635,26 +635,16 @@ class QemuAndroidRuntimeInstrumentationTest {
             token: String,
             process: NativeProcessHandle,
             timeoutMs: Long,
-            onHeartbeat: () -> Unit,
         ): Boolean {
             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
-            var nextHeartbeat = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(HEARTBEAT_INTERVAL_MS)
             while (true) {
-                var emitHeartbeat = false
                 synchronized(lock) {
                     if (capture.snapshot().contains(token)) return true
                     val now = System.nanoTime()
                     if (!process.isAlive || now >= deadline) return false
-                    val remaining = minOf(deadline - now, nextHeartbeat - now)
-                    val waitMs = TimeUnit.NANOSECONDS.toMillis(remaining).coerceAtLeast(1).coerceAtMost(250)
+                    val waitMs = TimeUnit.NANOSECONDS.toMillis(deadline - now).coerceAtLeast(1).coerceAtMost(250)
                     lock.wait(waitMs)
                     if (capture.snapshot().contains(token)) return true
-                    emitHeartbeat = System.nanoTime() >= nextHeartbeat
-                }
-                if (emitHeartbeat) {
-                    // Keep procfs reads and logcat I/O outside the serial pump's monitor.
-                    onHeartbeat()
-                    nextHeartbeat = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(HEARTBEAT_INTERVAL_MS)
                 }
             }
         }
@@ -677,16 +667,10 @@ class QemuAndroidRuntimeInstrumentationTest {
         timeoutMs: Long,
     ) {
         reportStage(stage)
-        val startedAt = System.nanoTime()
-        val reached = console.await(token, process, timeoutMs) {
-            val elapsedSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startedAt)
-            Log.i(
-                TAG,
-                "wait heartbeat stage=$stage elapsedSeconds=$elapsedSeconds " +
-                    "serialChars=${console.diagnosticTail().length} stderrChars=${stderr.snapshot().length}; " +
-                    process.diagnosticSnapshot(),
-            )
-        }
+        // The independent heartbeat owns process/QMP diagnostics. Keep this wait path
+        // limited to serial-buffer checks and timed monitor waits: procfs snapshots can
+        // block on Android and must never delay a guest prompt deadline.
+        val reached = console.await(token, process, timeoutMs)
         if (!reached) {
             if (!process.isAlive) process.awaitOutputPumps(2, TimeUnit.SECONDS)
             val failure = if (process.isAlive) "Timed out: $stage" else "Guest process exited before completing: $stage"
