@@ -20,6 +20,7 @@ class ServerService : Service() {
     private lateinit var workerThread: HandlerThread
     private lateinit var worker: Handler
     private lateinit var batteryMonitor: BatteryLevelMonitor
+    private var cpuExecutionLease: CpuExecutionLease? = null
     private var currentStatus = "Stopped"
     private lateinit var diagnosticEvents: DiagnosticsEventStore
     private val terminalInputReceiver = object : android.content.BroadcastReceiver() {
@@ -33,6 +34,7 @@ class ServerService : Service() {
         super.onCreate()
         createNotificationChannel()
         lifecycle = VmLifecycle()
+        cpuExecutionLease = CpuExecutionLease(this, "$packageName:guest-vm")
         diagnosticEvents = DiagnosticsEventStore(File(filesDir, "diagnostics/events.log"))
         workerThread = HandlerThread("pocketos-vm-service").apply { start() }
         worker = Handler(workerThread.looper)
@@ -58,6 +60,11 @@ class ServerService : Service() {
                 )
             },
             onStateChanged = { state ->
+                if (state == VmState.STOPPED || state == VmState.FAILED) {
+                    cpuExecutionLease?.release()
+                } else {
+                    cpuExecutionLease?.acquire()
+                }
                 diagnosticEvents.record(DiagnosticEventType.STATE_CHANGED, state, controller.lastStopReason)
                 val reason = if (state == VmState.STOPPED || state == VmState.FAILED) controller.lastStopReason else null
                 currentStatus = state.name.lowercase().replaceFirstChar { it.uppercase() } +
@@ -125,6 +132,7 @@ class ServerService : Service() {
     override fun onDestroy() {
         unregisterReceiver(terminalInputReceiver)
         batteryMonitor.close()
+        cpuExecutionLease?.close()
         if (::workerThread.isInitialized) workerThread.quitSafely()
         super.onDestroy()
     }
