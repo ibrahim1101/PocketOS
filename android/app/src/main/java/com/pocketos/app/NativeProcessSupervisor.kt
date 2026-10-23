@@ -50,7 +50,7 @@ class NativeProcessSupervisor : GuestProcessLauncher {
         activeProcess = process
         val pumpState = ProcessPumpState()
         val pumps = CountDownLatch(2)
-        val handle = NativeProcessHandle(process, pumpState, pumps)
+        val handle = NativeProcessHandle(process, pumpState, pumps, command.first())
         try {
             onProcessStarted(handle)
         } catch (failure: Throwable) {
@@ -132,12 +132,38 @@ class NativeProcessHandle internal constructor(
     private val process: Process,
     private val pumpState: ProcessPumpState,
     private val outputPumps: CountDownLatch,
+    private val executable: String,
 ) : GuestProcess {
     private val previousThreadCpuTicks = mutableMapOf<String, Long>()
 
-    /** OS PID from the retained Process handle, unaffected by restricted /proc child enumeration. */
+    /** Android's java.lang.Process stub has no pid() API; resolve our direct child from procfs. */
     val pid: Long
-        get() = process.pid()
+        get() = findChildPid() ?: -1L
+
+    private fun findChildPid(): Long? = runCatching {
+        val expectedName = File(executable).name
+        val taskDirectories = File("/proc/self/task").listFiles().orEmpty()
+        val childPids = taskDirectories.asSequence()
+            .flatMap { task -> readProcFile(File(task, "children")).split(Regex("\\s+")).asSequence() }
+            .mapNotNull(String::toLongOrNull)
+            .distinct()
+            .toList()
+        childPids.firstOrNull { candidate ->
+            val proc = File("/proc/$candidate")
+            if (!proc.isDirectory) return@firstOrNull false
+            val args = readProcFile(File(proc, "cmdline")).split('\\u0000')
+            val processName = args.firstOrNull()?.let(::File)?.name.orEmpty()
+            val state = readCpuStatState(File(proc, "stat"))
+            processName == expectedName && state != "Z"
+        } ?: childPids.firstOrNull { candidate ->
+            val state = readCpuStatState(File("/proc/$candidate/stat"))
+            state.isNotEmpty() && state != "Z"
+        }
+    }.getOrNull()
+
+    private fun readCpuStatState(statFile: File): String = runCatching {
+        statFile.readText().substringAfterLast(") ").trim().substringBefore(' ')
+    }.getOrDefault("")
 
     override val isAlive: Boolean
         get() = process.isAlive
@@ -179,9 +205,10 @@ class NativeProcessHandle internal constructor(
     /** Best-effort, bounded snapshot of the exact child PID and its procfs threads. */
     @Synchronized
     fun diagnosticSnapshot(): String = runCatching {
-        // Android can hide /proc/<owner>/task/*/children even from the app that
-        // launched the child. The retained Process handle already knows the exact PID.
-        val pid = process.pid()
+        val pid = findChildPid()
+        if (pid == null) {
+            return "qemuProcfs=pid-unavailable alive=$isAlive status=${exitStatusLabel()}"
+        }
         val processDir = File("/proc/$pid")
         if (!processDir.isDirectory) {
             "qemuProcfs=unavailable(pid=$pid alive=$isAlive)"
@@ -222,8 +249,7 @@ class NativeProcessHandle internal constructor(
                 "threadCount=$threadCount sampledThreads=${taskEntries.size} threads=$tasks"
         }
     }.getOrElse {
-        "qemuProcfs=unavailable pid=${runCatching { process.pid() }.getOrDefault(-1)} " +
-            "alive=$isAlive reason=${it.javaClass.simpleName}"
+        "qemuProcfs=unavailable pid=${pid} alive=$isAlive reason=${it.javaClass.simpleName}"
     }
 
     private fun readCpuTicks(statFile: File): Long = runCatching {
