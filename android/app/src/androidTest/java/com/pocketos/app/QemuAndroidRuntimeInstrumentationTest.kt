@@ -25,6 +25,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.GZIPInputStream
 
@@ -74,7 +75,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         assertTrue("Cleanup masked the original bounded boot failure: $failure", failure is AssertionError)
         val diagnostic = failure!!.message.orEmpty()
         assertTrue("Failure did not identify the failed boot stage", diagnostic.contains("Timed out: Waiting for an intentionally absent guest prompt"))
-        assertTrue("Failure did not include process exit state", diagnostic.contains("exitStatus=running"))
+        assertTrue("Failure did not include process exit state", diagnostic.contains("exitStatus=exited("))
         assertTrue("Failure did not include the serial tail", diagnostic.contains("POCKETOS_GUEST_BOOT_STARTED"))
         assertTrue("Failure did not include QMP connectivity", diagnostic.contains("qmp=unavailable"))
         assertTrue("Process remained alive after bounded cleanup", !process.isAlive)
@@ -694,11 +695,38 @@ class QemuAndroidRuntimeInstrumentationTest {
         stderr: BoundedDiagnosticCapture,
         timeoutMs: Long,
     ) {
-        reportStage(stage)
-        // The independent heartbeat owns process/QMP diagnostics. Keep this wait path
-        // limited to serial-buffer checks and timed monitor waits: procfs snapshots can
-        // block on Android and must never delay a guest prompt deadline.
-        val reached = console.await(token, process, timeoutMs)
+        val waiting = AtomicBoolean(true)
+        val deadlineExpired = AtomicBoolean(false)
+        val owner = Thread.currentThread()
+        val deadline = IndependentWatchdog(timeoutMs) {
+            if (waiting.compareAndSet(true, false)) {
+                deadlineExpired.set(true)
+                runCatching { process.expectOutputClosure() }
+                val stopped = runCatching {
+                    process.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                }.getOrDefault(false)
+                owner.interrupt()
+                val snapshot = runCatching { diagnosticSummary(process, console, stderr) }
+                    .getOrElse { "exitStatus=${process.exitStatusLabel()} diagnosticsUnavailable(${it.javaClass.simpleName})" }
+                activeJournal?.record("stage-deadline", "stage=$stage stopped=$stopped $snapshot")
+                Log.e(TAG, "stage deadline expired stage=$stage stopped=$stopped $snapshot")
+            }
+        }
+        val reached = try {
+            reportStage(stage)
+            // Keep the supervised wait limited to bounded serial checks and timed monitor
+            // waits. Procfs/QMP diagnostics and storage writes never run on this thread.
+            try {
+                val found = console.await(token, process, timeoutMs)
+                val completedBeforeDeadline = waiting.compareAndSet(true, false)
+                found && (completedBeforeDeadline || !deadlineExpired.get())
+            } catch (interrupted: InterruptedException) {
+                if (deadlineExpired.get()) false else throw interrupted
+            }
+        } finally {
+            waiting.set(false)
+            deadline.close()
+        }
         if (!reached) {
             if (!process.isAlive) process.awaitOutputPumps(2, TimeUnit.SECONDS)
             val failure = if (process.isAlive) "Timed out: $stage" else "Guest process exited before completing: $stage"
