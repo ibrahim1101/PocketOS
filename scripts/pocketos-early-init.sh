@@ -8,17 +8,23 @@ if ! mount -o remount,rw /; then
   exit 1
 fi
 
+# Make kernel devices visible before OpenRC's deferred devfs startup so
+# resize2fs can address the mounted VirtIO root device.
+if ! awk '$2 == "/dev" { found = 1 } END { exit !found }' /proc/mounts; then
+  mount -t devtmpfs -o mode=0755,nosuid devtmpfs /dev || true
+fi
+
 # Grow the mounted ext4 filesystem when Android has enlarged the backing image.
 # resize2fs supports online ext4 expansion; failures are reported without
 # making an otherwise bootable guest unusable.
-if [ -b /dev/vda ] && command -v resize2fs >/dev/null 2>&1; then
-  if resize2fs /dev/vda; then
-    echo "POCKETOS_EXT4_RESIZE_COMPLETE" >/dev/console
-  else
-    echo "PocketOS warning: ext4 auto-expansion failed" >/dev/console
-  fi
+if ! command -v resize2fs >/dev/null 2>&1; then
+  echo "PocketOS warning: resize2fs is unavailable" >/dev/console
+elif [ ! -b /dev/vda ]; then
+  echo "PocketOS warning: VirtIO root device /dev/vda is unavailable" >/dev/console
+elif resize2fs /dev/vda; then
+  echo "POCKETOS_EXT4_RESIZE_COMPLETE" >/dev/console
 else
-  echo "PocketOS warning: ext4 auto-expansion tool or root device is unavailable" >/dev/console
+  echo "PocketOS warning: ext4 auto-expansion failed" >/dev/console
 fi
 
 mkdir -p /run

@@ -129,6 +129,31 @@ def prepare_openrc_stall_image(source: str, delay_seconds: int) -> str:
     return image
 
 
+def ext4_capacity(path: str) -> int | None:
+    """Read the ext4 superblock capacity without mounting or modifying the image."""
+    try:
+        with open(path, "rb") as image:
+            image.seek(1080)
+            if image.read(2) != b"\x53\xef":
+                return None
+            image.seek(1048)
+            log_block_size = int.from_bytes(image.read(4), "little")
+            if log_block_size > 6:
+                return None
+            image.seek(1120)
+            incompat = int.from_bytes(image.read(4), "little")
+            image.seek(1028)
+            blocks = int.from_bytes(image.read(4), "little")
+            if incompat & 0x80:
+                image.seek(1360)
+                blocks |= int.from_bytes(image.read(4), "little") << 32
+            if blocks <= 0:
+                return None
+            return blocks * (1024 << log_block_size)
+    except OSError:
+        return None
+
+
 def prepare_grown_image(source: str, grow_by_mib: int) -> tuple[str, int]:
     """Create an isolated enlarged image and return its minimum expected ext4 size in KiB."""
     if grow_by_mib < 64:
@@ -209,21 +234,9 @@ def main() -> int:
         os.write(master_fd, password.encode("ascii") + b"\n")
         stage = "initial authenticated shell"
         wait_for(process, master_fd, buffer, b"$ ", args.timeout)
-        if minimum_fs_kib is not None:
-            os.write(
-                master_fd,
-                (
-                    "blocks=$(df -k / | awk 'NR == 2 {print $2}'); "
-                    "printf '__POCKETOS_EXT4_' ; printf 'BLOCKS__%s\\n' \"$blocks\"\n"
-                ).encode(),
-            )
+        if minimum_fs_kib is not None and b"POCKETOS_EXT4_RESIZE_COMPLETE" not in buffer:
             stage = "automatic ext4 expansion after disk growth"
-            wait_for(process, master_fd, buffer, b"__POCKETOS_EXT4_BLOCKS__", args.timeout)
-            sizes = re.findall(rb"__POCKETOS_EXT4_BLOCKS__(\d+)", buffer)
-            if not sizes or int(sizes[-1]) < minimum_fs_kib:
-                raise RuntimeError(
-                    f"ext4 did not grow to the expected capacity (minimum {minimum_fs_kib} KiB)"
-                )
+            raise RuntimeError("guest early init did not confirm a successful resize2fs run")
         if args.simulate_openrc_stall:
             os.write(
                 master_fd,
@@ -252,6 +265,14 @@ def main() -> int:
             raise TimeoutError("guest did not power off cleanly after the shutdown request")
         if process.returncode != 0:
             raise RuntimeError(f"QEMU exited with status {process.returncode} during guest poweroff")
+        if minimum_fs_kib is not None:
+            capacity_bytes = ext4_capacity(rootfs)
+            actual_fs_kib = 0 if capacity_bytes is None else capacity_bytes // 1024
+            if actual_fs_kib < minimum_fs_kib:
+                raise RuntimeError(
+                    f"ext4 superblock capacity did not expand (minimum {minimum_fs_kib} KiB, "
+                    f"actual {actual_fs_kib} KiB)"
+                )
         first_boot_completed = True
     except (RuntimeError, TimeoutError):
         print(f"First-boot account setup failed at {stage}.", file=sys.stderr)
