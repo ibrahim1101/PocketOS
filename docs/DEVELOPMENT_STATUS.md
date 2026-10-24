@@ -35,3 +35,8 @@ Updated: 2026-10-20
 - Measure boot time, memory use, and battery impact on physical ARM64 hardware. Validate LAN exposure across network transitions; custom kernels and secure remote access remain later work.
 - Do not merge or release without explicit approval.
 f9eee403ac862f15d2ece07da6167629d184b3be
+
+
+## Latest physical-device follow-up (v8)
+
+The v8 log shows first boot and QMP exit succeed, then second boot stops at `Mounting root:` before ext4 reports a mount. The next candidate requests a clean poweroff from Alpine before reopening the image, adds immediate detection for a repeated first-run prompt, retains bounded serial tails in the private journal, and moves timeout interruption ahead of process cleanup. Host and Android-emulator CI do not establish the Vivo second boot; keep the ARM64 guest runtime gate closed until that device test passes.

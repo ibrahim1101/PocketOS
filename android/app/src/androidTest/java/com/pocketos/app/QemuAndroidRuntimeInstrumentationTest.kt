@@ -23,6 +23,7 @@ import java.util.UUID
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.FutureTask
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -350,7 +351,7 @@ class QemuAndroidRuntimeInstrumentationTest {
     }
 
     @Test(timeout = MAX_GUEST_TEST_DURATION_MS)
-    fun bootsFreshAlpineSetsPasswordLogsInPersistsAndQuitsThroughQmp() {
+    fun bootsFreshAlpineSetsPasswordLogsInPersistsAndPowersOffGuest() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val cpuExecutionLease = CpuExecutionLease(context, "$TAG:physical-guest-test")
         cpuExecutionLease.acquire()
@@ -396,7 +397,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             } else {
                 val guest = active.lastOrNull { it.process.isAlive } ?: active.last()
                 val snapshot = runCatching {
-                    diagnosticSummary(guest.process, guest.console, guest.stderr, includeSerialTail = false)
+                    diagnosticSummary(guest.process, guest.console, guest.stderr, includeSerialTail = true)
                 }.getOrElse { "exitStatus=${guest.process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
                 journal.record("heartbeat", "stage=$activeStage $snapshot")
                 // Keep serial tails and procfs thread detail in the bounded private journal.
@@ -461,7 +462,7 @@ class QemuAndroidRuntimeInstrumentationTest {
                 awaitStage("Waiting for the account shell", "$ ", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
                 verifyGuestAccountAndPersistentMarker(firstConsole, firstProcess, firstStderr, writePersistenceProbe = true)
                 synchronizeGuestDisk(firstProcess, firstConsole, firstStderr)
-                gracefulQmpShutdown(firstProcess, firstQmpSocket, firstConsole, firstStderr)
+                gracefulGuestPoweroff(firstProcess, firstConsole, firstStderr)
             } finally {
                 stopIfStillRunning("first boot", firstProcess, firstConsole, firstStderr)
                 runCatching { firstLease.close() }
@@ -476,7 +477,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             try {
                 reportStage("Launching a fresh QEMU process against the released persistent disk")
                 secondProcess = startGuest(context, installed, disk, secondQmpSocket, secondConsole, secondStderr, activeProcesses, watchdog)
-                awaitStage("Waiting for login after restart", "pocketos login:", secondConsole, secondProcess, secondStderr, GUEST_BOOT_TIMEOUT_MS)
+                awaitStage("Waiting for login after restart", "pocketos login:", secondConsole, secondProcess, secondStderr, GUEST_BOOT_TIMEOUT_MS, unexpectedToken = "New password:")
                 assertFalse("First-run password setup repeated after restart", secondConsole.diagnosticTail().contains("New password:"))
                 assertTrue("Readiness probe did not recognize login readiness", secondConsole.probe.isReady)
 
@@ -486,7 +487,7 @@ class QemuAndroidRuntimeInstrumentationTest {
                 awaitStage("Waiting for the persisted account shell", "$ ", secondConsole, secondProcess, secondStderr, PROMPT_TIMEOUT_MS)
                 verifyGuestAccountAndPersistentMarker(secondConsole, secondProcess, secondStderr)
                 synchronizeGuestDisk(secondProcess, secondConsole, secondStderr)
-                gracefulQmpShutdown(secondProcess, secondQmpSocket, secondConsole, secondStderr)
+                gracefulGuestPoweroff(secondProcess, secondConsole, secondStderr)
             } finally {
                 stopIfStillRunning("second boot", secondProcess, secondConsole, secondStderr)
                 runCatching { secondLease.close() }
@@ -519,7 +520,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         awaitStage("Checking non-root identity and persistent first-run marker", "__POCKETOS_ACCOUNT_AND_DISK_OK__", console, process, stderr, PROMPT_TIMEOUT_MS)
     }
 
-    /** Flush guest writes before QMP quit so the persistence reboot tests a stable ext4 image. */
+    /** Flush writes, then shut Alpine down from the guest so ext4 unmounts before reboot. */
     private fun synchronizeGuestDisk(
         process: NativeProcessHandle,
         console: SerialCapture,
@@ -530,25 +531,23 @@ class QemuAndroidRuntimeInstrumentationTest {
         awaitStage("Waiting for guest filesystem sync", marker, console, process, stderr, PROMPT_TIMEOUT_MS)
     }
 
-    private fun gracefulQmpShutdown(
+    private fun gracefulGuestPoweroff(
         process: NativeProcessHandle,
-        socket: File,
         console: SerialCapture,
         stderr: BoundedDiagnosticCapture,
     ) {
-        reportStage("Requesting graceful QMP shutdown")
-        try {
-            QmpClient().requestQuit(socket.absolutePath, timeoutMillis = QMP_TIMEOUT_MS)
-        } catch (failure: Exception) {
-            throw AssertionError("QMP shutdown request failed. ${diagnosticSummary(process, console, stderr)}", failure)
-        }
-        assertTrue("QEMU did not exit after QMP quit. ${diagnosticSummary(process, console, stderr)}", process.awaitExit(QMP_EXIT_TIMEOUT_MS, TimeUnit.SECONDS))
-        assertEquals("QEMU did not exit cleanly after QMP quit", 0, process.exitCode)
+        reportStage("Requesting clean Alpine guest poweroff")
+        process.writeSerial("pocketos-shutdown\\n".toByteArray(Charsets.UTF_8))
         assertTrue(
-            "QEMU output pumps remained active after shutdown",
+            "Alpine did not finish its clean guest poweroff. ${diagnosticSummary(process, console, stderr)}",
+            process.awaitExit(GUEST_POWEROFF_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+        )
+        assertEquals("QEMU did not exit cleanly after guest poweroff", 0, process.exitCode)
+        assertTrue(
+            "QEMU output pumps remained active after guest poweroff",
             process.awaitOutputPumps(OUTPUT_PUMP_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS),
         )
-        reportStage("QEMU exited cleanly through QMP")
+        reportStage("Alpine guest powered off cleanly")
     }
 
     private fun startGuest(
@@ -670,16 +669,23 @@ class QemuAndroidRuntimeInstrumentationTest {
             token: String,
             process: NativeProcessHandle,
             timeoutMs: Long,
-        ): Boolean {
+        ): Boolean = awaitAny(listOf(token), process, timeoutMs) == token
+
+        fun awaitAny(
+            tokens: List<String>,
+            process: NativeProcessHandle,
+            timeoutMs: Long,
+        ): String? {
+            require(tokens.isNotEmpty())
             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
             while (true) {
                 synchronized(lock) {
-                    if (capture.snapshot().contains(token)) return true
+                    val snapshot = capture.snapshot()
+                    tokens.firstOrNull(snapshot::contains)?.let { return it }
                     val now = System.nanoTime()
-                    if (!process.isAlive || now >= deadline) return false
+                    if (!process.isAlive || now >= deadline) return null
                     val waitMs = TimeUnit.NANOSECONDS.toMillis(deadline - now).coerceAtLeast(1).coerceAtMost(250)
                     lock.wait(waitMs)
-                    if (capture.snapshot().contains(token)) return true
                 }
             }
         }
@@ -708,6 +714,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         process: NativeProcessHandle,
         stderr: BoundedDiagnosticCapture,
         timeoutMs: Long,
+        unexpectedToken: String? = null,
     ) {
         val waiting = AtomicBoolean(true)
         val deadlineExpired = AtomicBoolean(false)
@@ -716,14 +723,15 @@ class QemuAndroidRuntimeInstrumentationTest {
         val deadline = IndependentWatchdog(timeoutMs) {
             if (waiting.compareAndSet(true, false)) {
                 deadlineExpired.set(true)
+                // Wake the supervised caller before any process wait or diagnostics can block.
+                owner.interrupt()
                 try {
+                    val snapshot = runCatching { diagnosticSummary(process, console, stderr) }
+                        .getOrElse { "exitStatus=${process.exitStatusLabel()} diagnosticsUnavailable(${it.javaClass.simpleName})" }
                     runCatching { process.expectOutputClosure() }
                     val stopped = runCatching {
                         process.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                     }.getOrDefault(false)
-                    owner.interrupt()
-                    val snapshot = runCatching { diagnosticSummary(process, console, stderr) }
-                        .getOrElse { "exitStatus=${process.exitStatusLabel()} diagnosticsUnavailable(${it.javaClass.simpleName})" }
                     activeJournal?.record("stage-deadline", "stage=$stage stopped=$stopped $snapshot")
                     Log.e(TAG, "stage deadline expired stage=$stage stopped=$stopped $snapshot")
                 } finally {
@@ -736,9 +744,16 @@ class QemuAndroidRuntimeInstrumentationTest {
             // Keep the supervised wait limited to bounded serial checks and timed monitor
             // waits. Procfs/QMP diagnostics and storage writes never run on this thread.
             try {
-                val found = console.await(token, process, timeoutMs)
+                val observed = if (unexpectedToken == null) {
+                    if (console.await(token, process, timeoutMs)) token else null
+                } else {
+                    console.awaitAny(listOf(token, unexpectedToken), process, timeoutMs)
+                }
                 val completedBeforeDeadline = waiting.compareAndSet(true, false)
-                found && (completedBeforeDeadline || !deadlineExpired.get())
+                if (observed == unexpectedToken && unexpectedToken != null) {
+                    throw AssertionError("Unexpected guest state while $stage: observed '$unexpectedToken'. ${diagnosticSummary(process, console, stderr)}")
+                }
+                observed == token && (completedBeforeDeadline || !deadlineExpired.get())
             } catch (interrupted: InterruptedException) {
                 if (deadlineExpired.get()) false else throw interrupted
             }
@@ -847,19 +862,27 @@ class QemuAndroidRuntimeInstrumentationTest {
         activeStage = stage
         activeJournal?.record("stage", stage)
         Log.i(TAG, "stage=$stage")
-        InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
-            putString("pocketos.stage", stage)
-        })
+        runCatching {
+            stageStatusUpdates.execute {
+                InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+                    putString("pocketos.stage", stage)
+                })
+            }
+        }
     }
 
     companion object {
+        private val stageStatusUpdates = Executors.newSingleThreadExecutor { task ->
+            Thread(task, "pocketos-stage-status").apply { isDaemon = true }
+        }
         private const val TAG = "PocketOSRuntimeTest"
-        private const val MAX_GUEST_TEST_DURATION_MS = 12 * 60 * 1_000L
-        private const val TEST_WATCHDOG_TIMEOUT_MS = 8 * 60 * 1_000L
+        private const val MAX_GUEST_TEST_DURATION_MS = 5 * 60 * 1_000L
+        private const val TEST_WATCHDOG_TIMEOUT_MS = 4 * 60 * 1_000L
         private const val GUEST_BOOT_TIMEOUT_MS = 180_000L
         private const val PROMPT_TIMEOUT_MS = 30_000L
         private const val QMP_TIMEOUT_MS = 5_000
         private const val QMP_EXIT_TIMEOUT_MS = 15L
+        private const val GUEST_POWEROFF_TIMEOUT_SECONDS = 30L
         private const val MIN_TEST_STORAGE_BYTES = 600L * 1024L * 1024L
         private const val EXT4_MAGIC_OFFSET = 1080L
         private const val MAX_DIAGNOSTIC_CHARS = 4_096

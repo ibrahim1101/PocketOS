@@ -13,6 +13,9 @@ if ! awk '$2 == "/run" { found = 1 } END { exit !found }' /proc/mounts; then
   mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
 fi
 mkdir -p /run/lock /var/lib/pocketos
+# Permit the unprivileged pocketos account to request a root-mediated clean guest poweroff.
+(umask 000; : > /run/pocketos-shutdown-request)
+chmod 0666 /run/pocketos-shutdown-request
 # OpenRC is deferred until the first authenticated shell, so initialize the
 # configured hostname here for a stable serial login prompt and QEMU identity.
 if [ -r /etc/hostname ] && [ -s /etc/hostname ]; then

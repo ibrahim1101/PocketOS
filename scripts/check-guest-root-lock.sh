@@ -25,6 +25,10 @@ grep -Fq "::sysinit:/usr/local/sbin/pocketos-early-init" <<< "$inittab" || {
   echo "Guest does not remount its persistent root before account setup" >&2
   exit 1
 }
+grep -Fq "::once:/usr/local/sbin/pocketos-shutdown-watch" <<< "$inittab" || {
+  echo "Guest root shutdown watcher is not started by init" >&2
+  exit 1
+}
 grep -Fq "::once:/usr/local/sbin/pocketos-openrc-start" <<< "$inittab" || {
   echo "Guest OpenRC startup is not isolated from serial console readiness" >&2
   exit 1
@@ -33,6 +37,24 @@ if grep -Eq '^::(sysinit|wait):/sbin/openrc (boot|default)' <<< "$inittab"; then
   echo "OpenRC boot/default must not block BusyBox init before the serial console" >&2
   exit 1
 fi
+shutdown_watch="$(debugfs -R "cat /usr/local/sbin/pocketos-shutdown-watch" "$image" 2>/dev/null)"
+shutdown_command="$(debugfs -R "cat /usr/local/bin/pocketos-shutdown" "$image" 2>/dev/null)"
+grep -Fq 'pocketos-shutdown-request' <<< "$early_init" || {
+  echo "Guest early init does not create the non-root shutdown request" >&2
+  exit 1
+}
+grep -Fq 'chmod 0666 /run/pocketos-shutdown-request' <<< "$early_init" || {
+  echo "Guest shutdown request is not writable by pocketos" >&2
+  exit 1
+}
+grep -Fq 'poweroff -f' <<< "$shutdown_watch" || {
+  echo "Guest shutdown watcher does not perform a kernel poweroff" >&2
+  exit 1
+}
+grep -Fq 'printf shutdown' <<< "$shutdown_command" || {
+  echo "Guest shutdown command does not request the constrained poweroff action" >&2
+  exit 1
+}
 setup="$(debugfs -R "cat /usr/local/sbin/pocketos-firstboot" "$image" 2>/dev/null)"
 early_init="$(debugfs -R "cat /usr/local/sbin/pocketos-early-init" "$image" 2>/dev/null)"
 openrc_start="$(debugfs -R "cat /usr/local/sbin/pocketos-openrc-start" "$image" 2>/dev/null)"

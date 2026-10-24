@@ -34,10 +34,12 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   grep -q "^root:!:" /guest/etc/shadow
   printf "pocketos\n" > /guest/etc/hostname
   printf "auto lo\niface lo inet loopback\nauto eth0\niface eth0 inet dhcp\n" > /guest/etc/network/interfaces
-  mkdir -p /guest/usr/local/sbin
+  mkdir -p /guest/usr/local/sbin /guest/usr/local/bin
   install -m 755 /source/scripts/pocketos-early-init.sh /guest/usr/local/sbin/pocketos-early-init
   install -m 755 /source/scripts/pocketos-openrc-start.sh /guest/usr/local/sbin/pocketos-openrc-start
   install -m 755 /source/scripts/pocketos-firstboot.sh /guest/usr/local/sbin/pocketos-firstboot
+  install -m 755 /source/scripts/pocketos-shutdown-watch.sh /guest/usr/local/sbin/pocketos-shutdown-watch
+  install -m 755 /source/scripts/pocketos-shutdown.sh /guest/usr/local/bin/pocketos-shutdown
   cat > /guest/etc/profile.d/pocketos-openrc.sh <<EOF
 # Release asynchronous OpenRC only after the first authenticated guest login.
 if [ "\$(id -un)" = pocketos ] && [ -w /run/pocketos-user-login-ready ]; then
@@ -50,6 +52,7 @@ EOF
   # pocketos shell so neither boot services nor device setup can hide the console.
   cat > /guest/etc/inittab <<EOF
 ::sysinit:/usr/local/sbin/pocketos-early-init
+::once:/usr/local/sbin/pocketos-shutdown-watch
 ::once:/usr/local/sbin/pocketos-openrc-start
 ttyAMA0::respawn:/usr/local/sbin/pocketos-firstboot
 ::ctrlaltdel:/sbin/reboot
