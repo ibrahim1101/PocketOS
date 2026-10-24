@@ -1,0 +1,154 @@
+# Physical ARM64 Android testing
+
+This handoff is for testing PocketOS on an unrooted ARM64 Android device. The APKs and instrumentation APK are built together in one GitHub Actions job from one commit. The workflow uploads build hashes and Android emulator test results. The Android NDK and local QEMU compilation are not required.
+
+## Download the APK artifacts
+
+Prerequisites on Windows 11: GitHub CLI gh authenticated for the public PocketOS repository, Android platform-tools adb, and USB debugging enabled on the Vivo I2501. Replace the run ID and commit SHA with the values from a successful CI run.
+
+```powershell
+$Repo = "ibrahim1101/PocketOS"
+$RunId = "<successful GitHub Actions run ID>"
+$Commit = "<full commit SHA from that run>"
+$ArtifactDir = Join-Path $PWD "PocketOS-physical-test"
+New-Item -ItemType Directory -Force $ArtifactDir | Out-Null
+
+gh run download $RunId --repo $Repo --name "pocketos-android-apk-$Commit" --dir $ArtifactDir
+gh run download $RunId --repo $Repo --name "pocketos-instrumentation-apk-$Commit" --dir $ArtifactDir
+gh run download $RunId --repo $Repo --name "pocketos-test-handoff-$Commit" --dir $ArtifactDir
+
+Get-FileHash (Join-Path $ArtifactDir "PocketOS-debug.apk") -Algorithm SHA256
+Get-FileHash (Join-Path $ArtifactDir "PocketOS-androidTest.apk") -Algorithm SHA256
+Get-Content (Join-Path $ArtifactDir "dist\build-info.txt")
+Get-Content (Join-Path $ArtifactDir "dist\SHA256SUMS")
+```
+
+The workflow must show success before treating the APKs as a validated handoff. Check that build-info.txt contains the same commit SHA used in the artifact names. Use a successful **push** run from `feat/m1-linux-boot` for installable development updates. Pull-request runs use a disposable key and their artifact names end in `-pull-request`; those APKs cannot update an install signed by the branch key. The mismatch reported for the earlier test run came from installing a pull-request-signed artifact after a branch-signed build. The workflow now identifies the signing kind in build-info.txt and labels pull-request artifacts explicitly.
+
+For the consolidated physical check, use [`scripts/test-vivo.ps1`](../scripts/test-vivo.ps1). It downloads all three artifacts, requires a successful trusted push run from this branch, checks both APK SHA-256 hashes and signer fingerprints against CI metadata, installs without uninstalling anything, and runs one end-to-end Alpine workflow under a host-side timeout. That single instrumentation test launches packaged ARM64 QEMU, checks first-run setup and non-root login, syncs a test file, requests a root-mediated clean poweroff from the Alpine guest, waits for QEMU to exit, reboots the same disk, verifies the existing password and file, and checks clean shutdown. The script then creates one sanitized ZIP with the instrumentation result, filtered logcat, process/service state, and app-private watchdog journal. Example:
+
+```powershell
+$RunId = "<successful trusted push run ID>"
+.\scripts\test-vivo.ps1 -RunId $RunId -Serial "<Vivo ADB serial>"
+```
+
+If `-Serial` is omitted, the script requires exactly one online ADB device. A signing mismatch stops installation and preserves the existing app and guest data; resolve that signing transition separately rather than allowing the script to uninstall packages.
+
+Trusted pushes to `feat/m1-linux-boot` reuse one development debug signing key from the GitHub Actions cache. Pull-request builds intentionally use an isolated temporary key. CI records the certificate SHA-256 in build-info.txt and verifies that the app and instrumentation APKs share that certificate. If the installed APKs came from a pull-request build with a different key, uninstall both packages once before switching to trusted branch artifacts; this deletes PocketOS app data. Later trusted branch builds can be installed over them with `adb install -r`. The instrumentation APK must also come from the same workflow run as the app APK. This is a development signing identity, not a release key. GitHub may evict inactive caches, so compare the recorded fingerprint when upgrading; a changed fingerprint requires uninstalling both packages first.
+
+## Install and run on the Vivo
+
+Connect the intended phone, enable Developer options → USB debugging, approve the device prompt, and confirm Android reports the expected ARM64 device:
+
+```powershell
+$Adb = (Get-Command adb -ErrorAction Stop).Source
+$Serial = "<serial shown by adb devices -l>"
+$AppApk = Join-Path $ArtifactDir "PocketOS-debug.apk"
+$TestApk = Join-Path $ArtifactDir "PocketOS-androidTest.apk"
+
+& $Adb devices -l
+& $Adb -s $Serial shell getprop ro.product.cpu.abi
+& $Adb -s $Serial shell getprop ro.build.version.release
+& $Adb -s $Serial install -r $AppApk
+& $Adb -s $Serial install -r $TestApk
+```
+
+If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the installed APKs were signed by a different key. Uninstall the test package and app once, then install both APKs from the same CI run. Removing the app erases PocketOS app data, including the persistent guest disk, so export that disk first if it contains data you want to keep.
+
+```powershell
+& $Adb -s $Serial uninstall com.pocketos.app.test 2>$null
+& $Adb -s $Serial uninstall com.pocketos.app 2>$null
+```
+
+Expected ABI: arm64-v8a. Android 16 may report release 16 or API level 36.
+
+The full guest test has an 4-minute independent watchdog plus a 5-minute JUnit ceiling. Every serial prompt wait also has a deadline callback that kills its QEMU process and interrupts its caller, so timeout enforcement does not depend on the instrumentation thread returning from a wait. The overall watchdog kills registered QEMU processes before diagnostic collection; late-registered children are stopped immediately. Five-second sanitized health snapshots include serial tail, process state, per-thread CPU deltas, and QMP status, and are written to a bounded app-private journal that survives instrumentation termination. Journal writes are queued to a bounded in-memory buffer and persisted on a daemon writer, so slow app-private storage cannot block prompt deadlines or watchdog callers. Prompt waits perform only bounded serial checks and timed monitor waits; they never synchronously read procfs or QMP. Both the test and foreground VM service hold a partial CPU wake lock only while guest execution is active; the lock is released on stop/failure and has a 65-minute fallback. The production guest controller also stops a session that does not reach serial readiness within 180 seconds. QMP probes have caller-side deadlines that include local socket connection time. The persistence reboot test asks Alpine to power itself off cleanly before reopening ext4; a repeated first-run password prompt now fails immediately. Diagnostics include sanitized launch configuration, QEMU thread state, per-thread cumulative CPU ticks and deltas, wait channels, stdout/stderr tails, exit status, QMP VM status, and `query-cpus-fast` vCPU thread IDs/halted state. Procfs fields are best effort; Android may restrict wait-channel names. The launch summary and journal redact app-private paths and the ephemeral test password. The test uses an isolated temporary guest disk and never changes the user's persistent guest disk.
+
+```powershell
+$ResultsDir = Join-Path $ArtifactDir "device-results"
+New-Item -ItemType Directory -Force $ResultsDir | Out-Null
+& $Adb -s $Serial shell pm list instrumentation | Tee-Object (Join-Path $ResultsDir "instrumentation-runners.txt")
+
+$NativeOutput = & $Adb -s $Serial shell am instrument -w -r `
+  -e class 'com.pocketos.app.QemuAndroidRuntimeInstrumentationTest#packagedArm64QemuRunsOnAndroid' `
+  com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner 2>&1
+$NativeExitCode = $LASTEXITCODE
+$NativeText = ($NativeOutput -join [Environment]::NewLine) -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
+$NativeText | Set-Content -Encoding utf8 (Join-Path $ResultsDir "qemu-native-test.txt")
+$NativeText
+"Native test exit code: $NativeExitCode"
+
+$SupervisionOutput = & $Adb -s $Serial shell am instrument -w -r `
+  -e class 'com.pocketos.app.QemuAndroidRuntimeInstrumentationTest#packagedAlpineQemuIsStoppedWhenInstrumentationWaitIsBlocked' `
+  com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner 2>&1
+$SupervisionExitCode = $LASTEXITCODE
+$SupervisionText = ($SupervisionOutput -join [Environment]::NewLine) -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
+$SupervisionText | Set-Content -Encoding utf8 (Join-Path $ResultsDir "qemu-supervision-test.txt")
+$SupervisionText
+"Supervision test exit code: $SupervisionExitCode"
+
+$GuestOutput = & $Adb -s $Serial shell am instrument -w -r `
+  -e class 'com.pocketos.app.QemuAndroidRuntimeInstrumentationTest#bootsFreshAlpineSetsPasswordLogsInPersistsAndPowersOffGuest' `
+  com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner 2>&1
+$GuestExitCode = $LASTEXITCODE
+$GuestText = ($GuestOutput -join [Environment]::NewLine) -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
+$GuestText | Set-Content -Encoding utf8 (Join-Path $ResultsDir "alpine-guest-test.txt")
+$GuestText
+"Guest test exit code: $GuestExitCode"
+```
+
+A zero exit code and `OK (1 test)` indicate a pass. Runtime tests must execute rather than show assumption skips. `INSTRUMENTATION_STATUS: pocketos.stage=...` and `PocketOSRuntimeTest` logcat entries show progress. The full guest run covers seed integrity, first-run password setup, non-root login, and a same-disk second boot. It requires the first-run setup to stay complete, the original password to work, and a file written and synced by the first authenticated shell to survive reboot before persistence is reported as passed. Each QEMU boot uses its own serial capture and QMP socket, and the first process's output pumps must exit before the disk lease is released. If a host-side ADB test times out or fails, the PowerShell handoff force-stops both packages and kills any remaining QEMU child under the app UID, then records the remaining process state.
+
+## Capture sanitized device diagnostics
+
+```powershell
+# Read the full buffer so diagnosis is not limited to a tag-filtered capture. Only a
+# whitelist of PocketOS/test and process-health lines is written to the shared report.
+$FullLog = & $Adb -s $Serial logcat -d -v threadtime 2>&1
+$RelevantLog = $FullLog | Where-Object {
+  $_ -match 'PocketOSRuntimeTest|TestRunner|AndroidJUnitRunner|InstrumentationResultPrinter' -or
+  $_ -match '(?i)lmkd|lowmemory|out of memory|fatal signal|avc: denied|ANR in' -or
+  $_ -match 'ActivityManager.*(com\.pocketos\.app|libqemu-system-aarch64)'
+}
+$LogText = ($RelevantLog -join [Environment]::NewLine) -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
+$LogText | Set-Content -Encoding utf8 (Join-Path $ResultsDir "logcat-sanitized.txt")
+
+$ServiceInfo = & $Adb -s $Serial shell dumpsys activity services com.pocketos.app 2>&1
+($ServiceInfo -join [Environment]::NewLine) | Set-Content -Encoding utf8 (Join-Path $ResultsDir "service-state.txt")
+```
+
+After tests, open PocketOS → Diagnostics → Export report and save pocketos-diagnostics.txt to Downloads. Retrieve and bundle the results:
+
+```powershell
+& $Adb -s $Serial pull /sdcard/Download/pocketos-diagnostics.txt (Join-Path $ResultsDir "pocketos-diagnostics.txt")
+$LatestRuntimeLog = (& $Adb -s $Serial shell run-as com.pocketos.app ls -t files/diagnostics 2>$null | Select-Object -First 1).Trim()
+if ($LatestRuntimeLog) {
+  & $Adb -s $Serial exec-out run-as com.pocketos.app cat "files/diagnostics/$LatestRuntimeLog" |
+    Set-Content -Encoding utf8 (Join-Path $ResultsDir "runtime-watchdog-journal.txt")
+}
+Compress-Archive -Path (Join-Path $ResultsDir "*") -DestinationPath (Join-Path $ArtifactDir "device-results.zip") -Force
+```
+
+Review the files before sharing. Do not attach passwords, private keys, or an exported guest disk to a bug report.
+
+## Test checklist and expected results
+
+1. QEMU native launch: the executable runs from Android's extracted ARM64 native-library directory, reports QEMU 11.1.2, and exits 0.
+2. Real-process watchdog: an actual packaged Alpine QEMU process is launched; while the instrumentation caller waits, the independent five-second watchdog terminates QEMU, closes its output pumps, and leaves a QMP/CPU/serial/stderr snapshot in the app-private journal.
+3. Asset integrity and disk initialization: the app-private installer initializes a valid ext4 seed; the test verifies the compressed seed hash before creating its isolated copy.
+4. Guest boot and serial readiness: Alpine reaches `New password:` or `pocketos login:` within 180 seconds. The runner reports the stage as it proceeds.
+5. First-run setup and login: the test sends an ephemeral random credential over serial, waits for setup completion, logs in as pocketos, and verifies a non-root UID.
+6. Persistence: the test requests a clean guest poweroff after the first login, boots the same isolated disk again, logs in, and verifies the setup marker and non-root account persist.
+7. Graceful shutdown: Alpine syncs and powers off through the root-owned shutdown watcher; QEMU exits with status 0 before the disk lease is released.
+8. Failure diagnostics and cleanup: Android instrumentation verifies stdout/stderr capture after a simulated guest boot failure, nonzero exit status, concurrent pipe closure during force-stop, and isolation from output-consumer exceptions.
+9. Bounded duration and cleanup: the complete Alpine workflow ends within the 4-minute independent watchdog deadline; the production controller also stops a guest that fails to reach readiness within 180 seconds. The test reports the last stage and sanitized bounded serial/stderr tails; the watchdog terminates QEMU even if the instrumentation thread is blocked.
+10. Runtime gate: only successful QEMU execution and guest-boot tests record version-scoped evidence. If either ARM64 boot proof fails or is skipped, the PocketOS start gate remains closed.
+
+Host QEMU and Android x86_64 emulator runs do not establish physical ARM64 compatibility. The Vivo test is the first device-level proof. Report actual outputs and failures before enabling real PocketOS sessions.
+
+The CI Android x86_64 emulator runs the process-supervision, stream-cleanup, guest-asset, and QMP regression tests. It intentionally skips `packagedArm64QemuRunsOnAndroid` and `bootsFreshAlpineSetsPasswordLogsInPersistsAndPowersOffGuest` because they require an ARM64 Android runtime. A green emulator job is not evidence that either ARM64 runtime test executed.
+
+## Storage management
+
+- Storage → Manage → Grow disk grows the raw image while stopped; ext4 expands on next boot.
+- Storage → Manage → Import ext4 backup confirms replacement, validates the selected image, stages it, then atomically replaces the disk while stopped. Export first if current data may be needed.
