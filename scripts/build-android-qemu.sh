@@ -214,7 +214,9 @@ compat_object="$build_root/pocketos-android-shm-compat.o"
 export PATH="$wrappers:$PATH"
 export CFLAGS="-O2 -fPIE -D__BIONIC__=1 -I$prefix/include -I$script_dir"
 export CXXFLAGS="-O2 -fPIE"
-export LDFLAGS="-pie -L$prefix/lib -Wl,--whole-archive -lpocketos-android-compat -Wl,--no-whole-archive"
+# Keep the Android Bionic interpreter explicit: the packaged PIE is executed from
+# app-private nativeLibraryDir and must be loadable by Android's system linker.
+export LDFLAGS="-pie -Wl,--dynamic-linker=/system/bin/linker64 -L$prefix/lib -Wl,--whole-archive -lpocketos-android-compat -Wl,--no-whole-archive"
 # Add the compatibility prototypes only to QEMU's POSIX shared-memory
 # implementation; Meson's function probes use their own prototypes.
 python3 - "$qemu_source/util/oslib-posix.c" <<'PY'
@@ -286,8 +288,13 @@ if ! grep -Eq 'Type:.*DYN' <<<"$readelf_header"; then
   echo "Expected QEMU output to be a PIE executable" >&2
   exit 1
 fi
-if ! "$llvm_readelf" -l "$qemu_binary" | grep -q '/system/bin/linker64'; then
-  echo "QEMU output does not use Android's system dynamic linker" >&2
+program_headers="$("$llvm_readelf" -lW "$qemu_binary")"
+if ! grep -Fq '/system/bin/linker64' <<<"$program_headers"; then
+  echo "QEMU output does not request Android's system dynamic linker" >&2
+  echo "QEMU program headers:" >&2
+  printf '%s\n' "$program_headers" >&2
+  echo "QEMU .interp section:" >&2
+  "$llvm_readelf" -p .interp "$qemu_binary" >&2 || true
   exit 1
 fi
 if "$llvm_readelf" -d "$qemu_binary" | grep -Eq '\((RPATH|RUNPATH)\)'; then
