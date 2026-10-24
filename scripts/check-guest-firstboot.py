@@ -218,7 +218,7 @@ def main() -> int:
                 ).encode(),
             )
             stage = "automatic ext4 expansion after disk growth"
-            read_until(process, master_fd, b"__POCKETOS_EXT4_BLOCKS__", time.monotonic() + args.timeout, buffer)
+            wait_for(process, master_fd, buffer, b"__POCKETOS_EXT4_BLOCKS__", args.timeout)
             sizes = re.findall(rb"__POCKETOS_EXT4_BLOCKS__(\d+)", buffer)
             if not sizes or int(sizes[-1]) < minimum_fs_kib:
                 raise RuntimeError(
