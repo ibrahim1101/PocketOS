@@ -46,6 +46,26 @@ class GuestStorageStatusTest {
     }
 
     @Test
+    fun rejectsOverflowing64BitExt4CapacityAndFreeCounts() {
+        val directory = createTempDir()
+        try {
+            val disk = ext4Image(directory)
+            RandomAccessFile(disk, "rw").use { image ->
+                writeUInt32LE(image, 1024 + 96, 0x80)
+                writeUInt32LE(image, 1024 + 0x150, 0xFFFFFFFF)
+                writeUInt32LE(image, 1024 + 0x158, 0xFFFFFFFF)
+            }
+
+            val status = GuestStorageStatus.read(disk, directory)
+
+            assertEquals(4096L, status.diskCapacityBytes)
+            assertEquals(null, status.guestFileSystem)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun leavesGuestFreeSpaceUnknownWhenTheDiskIsLeased() {
         val directory = createTempDir()
         try {

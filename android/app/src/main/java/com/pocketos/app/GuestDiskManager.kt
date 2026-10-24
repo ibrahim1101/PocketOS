@@ -88,12 +88,16 @@ object GuestDiskManager {
                 image.seek(MAGIC)
                 if (image.readUnsignedByte() != 0x53 || image.readUnsignedByte() != 0xEF) return null
                 val logBlock = read32(image, LOG_BLOCK)
-                if (logBlock > 6) return null
+                if (logBlock !in 0L..6L) return null
+                val blockSize = 1024L shl logBlock.toInt()
+                val maximumBlocksInImage = file.length() / blockSize
                 val incompat = read32(image, INCOMPAT)
-                var blocks = read32(image, BLOCKS)
-                if (incompat and FEATURE_64BIT != 0L) blocks += read32(image, BLOCKS_HIGH) shl 32
-                if (blocks <= 0) return null
-                (blocks * (1024L shl logBlock.toInt())).takeIf { it <= file.length() }
+                val lowBlocks = read32(image, BLOCKS)
+                val highBlocks = if (incompat and FEATURE_64BIT != 0L) read32(image, BLOCKS_HIGH) else 0L
+                if (highBlocks > (maximumBlocksInImage ushr 32)) return null
+                val blocks = (highBlocks shl 32) or lowBlocks
+                if (blocks <= 0 || blocks > maximumBlocksInImage) return null
+                blocks * blockSize
             }
         }.getOrNull()
     }

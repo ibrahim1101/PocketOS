@@ -62,16 +62,25 @@ data class GuestStorageStatus(
                 if (logBlockSize > 6) return null
                 val blockSize = 1024L shl logBlockSize.toInt()
                 val incompatFeatures = readUInt32LE(image, FEATURE_INCOMPAT_OFFSET)
-                var totalBlocks = readUInt32LE(image, SUPERBLOCK_OFFSET + 4)
-                var freeBlocks = readUInt32LE(image, SUPERBLOCK_OFFSET + 12)
+                val maximumBlocksInImage = disk.length() / blockSize
+                val totalLow = readUInt32LE(image, SUPERBLOCK_OFFSET + 4)
+                val freeLow = readUInt32LE(image, SUPERBLOCK_OFFSET + 12)
+                val totalHigh: Long
+                val freeHigh: Long
                 if (incompatFeatures and EXT4_FEATURE_INCOMPAT_64BIT != 0L) {
-                    totalBlocks += readUInt32LE(image, BLOCKS_COUNT_HIGH_OFFSET) shl 32
-                    freeBlocks += readUInt32LE(image, FREE_BLOCKS_COUNT_HIGH_OFFSET) shl 32
+                    totalHigh = readUInt32LE(image, BLOCKS_COUNT_HIGH_OFFSET)
+                    freeHigh = readUInt32LE(image, FREE_BLOCKS_COUNT_HIGH_OFFSET)
+                } else {
+                    totalHigh = 0
+                    freeHigh = 0
                 }
-                if (totalBlocks <= 0 || freeBlocks > totalBlocks) return null
-                val fsCapacity = totalBlocks * blockSize
-                if (fsCapacity <= 0 || fsCapacity > disk.length()) return null
-                return GuestFileSystemSpace(fsCapacity, freeBlocks * blockSize)
+                if (totalHigh > (maximumBlocksInImage ushr 32) ||
+                    freeHigh > (maximumBlocksInImage ushr 32)
+                ) return null
+                val totalBlocks = (totalHigh shl 32) or totalLow
+                val freeBlocks = (freeHigh shl 32) or freeLow
+                if (totalBlocks <= 0 || totalBlocks > maximumBlocksInImage || freeBlocks > totalBlocks) return null
+                return GuestFileSystemSpace(totalBlocks * blockSize, freeBlocks * blockSize)
             }
         }
 

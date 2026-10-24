@@ -37,6 +37,28 @@ class GuestDiskManagerTest {
         } finally { dir.deleteRecursively() }
     }
 
+    @Test fun rejectsOverflowing64BitExt4BackupWithoutReplacingCurrentDisk() {
+        val dir = createTempDir(prefix = "pocketos-restore-overflow")
+        try {
+            val disk = ext4(dir, "rootfs.ext4", 1024 * 1024)
+            val original = disk.readBytes()
+            val backupFile = ext4(dir, "overflow.ext4", 1024 * 1024)
+            RandomAccessFile(backupFile, "rw").use { image ->
+                image.seek(1120)
+                image.write(byteArrayOf(0x80.toByte(), 0, 0, 0))
+                image.seek(1360)
+                image.write(byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()))
+            }
+
+            var rejected = false
+            try { GuestDiskManager.restore(disk) { backupFile.inputStream() } }
+            catch (_: IllegalArgumentException) { rejected = true }
+
+            assertTrue(rejected)
+            assertTrue(original.contentEquals(disk.readBytes()))
+        } finally { dir.deleteRecursively() }
+    }
+
     @Test fun restoresValidatedExt4Backup() {
         val dir = createTempDir(prefix = "pocketos-restore")
         try {
