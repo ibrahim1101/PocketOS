@@ -276,6 +276,7 @@ jobs:
           --initramfs "$RUNNER_TEMP/initramfs-virt"
           --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
           --timeout 120
+          --grow-by-mib 128
       - name: Execute Linux commands in the guest shell
         run: >-
           python3 scripts/check-guest-shell.py

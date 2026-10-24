@@ -129,6 +129,23 @@ def prepare_openrc_stall_image(source: str, delay_seconds: int) -> str:
     return image
 
 
+def prepare_grown_image(source: str, grow_by_mib: int) -> tuple[str, int]:
+    """Create an isolated enlarged image and return its minimum expected ext4 size in KiB."""
+    if grow_by_mib < 64:
+        raise ValueError("--grow-by-mib must be at least 64 MiB for a clear capacity regression")
+    fd, image = tempfile.mkstemp(prefix="pocketos-grown-", suffix=".ext4")
+    os.close(fd)
+    shutil.copyfile(source, image)
+    original_bytes = os.path.getsize(source)
+    with open(image, "r+b") as disk:
+        disk.truncate(original_bytes + grow_by_mib * 1024 * 1024)
+        disk.flush()
+        os.fsync(disk.fileno())
+    # Leave 32 MiB for ext4 metadata and reserved blocks while still proving growth.
+    minimum_fs_kib = (original_bytes + (grow_by_mib - 32) * 1024 * 1024) // 1024
+    return image, minimum_fs_kib
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kernel", required=True)
@@ -140,6 +157,12 @@ def main() -> int:
         action="store_true",
         help="inject a blocked boot service and require serial setup to continue independently",
     )
+    parser.add_argument(
+        "--grow-by-mib",
+        type=int,
+        default=0,
+        help="test online ext4 auto-expansion by enlarging an isolated disk copy",
+    )
     args = parser.parse_args()
 
     for path in (args.kernel, args.initramfs, args.rootfs):
@@ -148,8 +171,17 @@ def main() -> int:
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
 
+    if args.grow_by_mib < 0:
+        parser.error("--grow-by-mib cannot be negative")
+    if args.grow_by_mib and args.simulate_openrc_stall:
+        parser.error("growth and OpenRC-stall regressions run separately")
+
     rootfs = args.rootfs
     test_image = None
+    minimum_fs_kib = None
+    if args.grow_by_mib:
+        test_image, minimum_fs_kib = prepare_grown_image(args.rootfs, args.grow_by_mib)
+        rootfs = test_image
     if args.simulate_openrc_stall:
         test_image = prepare_openrc_stall_image(args.rootfs, max(args.timeout, 120))
         rootfs = test_image
@@ -177,6 +209,21 @@ def main() -> int:
         os.write(master_fd, password.encode("ascii") + b"\n")
         stage = "initial authenticated shell"
         wait_for(process, master_fd, buffer, b"$ ", args.timeout)
+        if minimum_fs_kib is not None:
+            os.write(
+                master_fd,
+                (
+                    "blocks=$(df -k / | awk 'NR == 2 {print $2}'); "
+                    "printf '__POCKETOS_EXT4_' ; printf 'BLOCKS__%s\\n' \"$blocks\"\n"
+                ).encode(),
+            )
+            stage = "automatic ext4 expansion after disk growth"
+            read_until(process, master_fd, b"__POCKETOS_EXT4_BLOCKS__", time.monotonic() + args.timeout, buffer)
+            sizes = re.findall(rb"__POCKETOS_EXT4_BLOCKS__(\d+)", buffer)
+            if not sizes or int(sizes[-1]) < minimum_fs_kib:
+                raise RuntimeError(
+                    f"ext4 did not grow to the expected capacity (minimum {minimum_fs_kib} KiB)"
+                )
         if args.simulate_openrc_stall:
             os.write(
                 master_fd,
@@ -265,6 +312,11 @@ def main() -> int:
 
     if args.simulate_openrc_stall:
         print("First login and persisted second-boot login succeeded while an OpenRC boot service was blocked.")
+    elif minimum_fs_kib is not None:
+        print(
+            "First-boot account setup, ext4 auto-expansion, synced persistence file, "
+            "and same-disk second-boot login succeeded."
+        )
     else:
         print("First-boot account setup, synced persistence file, and same-disk second-boot login succeeded.")
     return 0

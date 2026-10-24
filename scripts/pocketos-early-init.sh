@@ -8,6 +8,19 @@ if ! mount -o remount,rw /; then
   exit 1
 fi
 
+# Grow the mounted ext4 filesystem when Android has enlarged the backing image.
+# resize2fs supports online ext4 expansion; failures are reported without
+# making an otherwise bootable guest unusable.
+if [ -b /dev/vda ] && command -v resize2fs >/dev/null 2>&1; then
+  if resize2fs /dev/vda; then
+    echo "POCKETOS_EXT4_RESIZE_COMPLETE" >/dev/console
+  else
+    echo "PocketOS warning: ext4 auto-expansion failed" >/dev/console
+  fi
+else
+  echo "PocketOS warning: ext4 auto-expansion tool or root device is unavailable" >/dev/console
+fi
+
 mkdir -p /run
 if ! awk '$2 == "/run" { found = 1 } END { exit !found }' /proc/mounts; then
   mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
