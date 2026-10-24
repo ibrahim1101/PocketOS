@@ -81,7 +81,7 @@ object GuestDiskManager {
         }
     }
 
-    private fun ext4Capacity(file: File): Long? {
+    internal fun ext4Capacity(file: File): Long? {
         if (!file.isFile || file.length() < MAGIC + 2) return null
         return runCatching {
             RandomAccessFile(file, "r").use { image ->
