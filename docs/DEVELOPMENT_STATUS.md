@@ -1,17 +1,15 @@
 # PocketOS development status
 
-Updated: 2026-10-20
+Updated: 2026-10-25
 
 ## Current state
 
-- Active milestones: M9 — real server workloads; physical ARM64 runtime validation remains pending.
+- Active work: physical ARM64 runtime validation on the Vivo I2501. M0-M9 feature implementation is CI-verified; public tunneling and custom kernels remain deferred.
 - Active branch: feat/m1-linux-boot; PR #1 remains open.
-- Latest fully successful workflow: run #192 (commit 8b0fa28). It built both APKs from one commit, cross-built Android ARM64 QEMU, passed APK ABI audit and emulator instrumentation, and passed Alpine boot, persistence, SQLite, and localhost HTTP checks.
-- The APK packages QEMU 11.1.2, Alpine's matching kernel and initramfs, a compressed ext4 seed disk, and a SHA-256 manifest. CI verifies the root password is locked in the generated seed image.
-- The app installs and verifies guest assets in private storage. Unit and Android instrumentation tests cover disk integrity, repeat install, exclusive disk leasing, VM lifecycle, readiness, session policy, and runtime-gate decisions.
-- Host CI boots Alpine under QEMU, provisions a non-root pocketos account through hidden serial password prompts, verifies login after restart, runs Linux commands, checks ext4 persistence, and tests localhost HTTP forwarding.
-- No QEMU execution, guest boot, or interactive guest login has yet been performed on ARM64 Android. The physical-device instrumentation test now covers first-run password creation, non-root login, a persistent setup marker across reboot, and QMP shutdown using an isolated throwaway disk. The x86_64 Android emulator skips the ARM64-only runtime tests. A Linux ARM64 emulator job was removed because Google's SDK repository did not provide the emulator package.
-- The ARM64 runtime gate is closed by default. On an ARM64 Android install, QemuAndroidRuntimeInstrumentationTest runs QEMU --version and boots the packaged Alpine guest to its first-run or login prompt. Successful tests save evidence tied to the packaged guest asset manifest and QEMU version; the service can start only when both checks pass. Run gradle -p android connectedDebugAndroidTest on an ARM64 Android device to execute these checks.
+- Latest fully successful workflow: run #289 (commit 51b4eb50252ec60f126f724d6f547b5594643145). It cross-built Android ARM64 QEMU, packaged the Alpine guest, passed host guest boot and persistence checks, built both APKs from the same commit, passed the APK ABI audit, and passed Android emulator instrumentation.
+- Run artifacts contain the signed debug app APK, instrumentation APK, build identity, APK checksums, and emulator reports. The trusted branch debug signing identity is retained so updates install with `adb install -r`.
+- CI verified guest ext4 growth from an enlarged image through online `resize2fs`, first-run setup, clean poweroff, and same-disk login after reboot. Android-side ext4 restore/storage parsing also rejects overflowing 64-bit filesystem metadata.
+- Host QEMU and the x86_64 Android emulator do not establish ARM64 guest boot on Android. The Vivo runtime gate remains closed until the physical instrumentation workflow passes.
 
 ## Implemented and CI-verified
 
@@ -19,6 +17,8 @@ Updated: 2026-10-20
 - Dashboard start/stop controls, status refresh, serial terminal, guest RAM/vCPU/HTTP port settings, opt-in Wi-Fi LAN exposure, a persistent storage view, runtime diagnostics, and sanitized diagnostics export through Android's document picker. The export includes a bounded event history with enum-only event details; terminal contents, credentials, file paths, arbitrary error text, and network addresses are excluded.
 - Persistent storage screen reports raw guest image capacity, Android device free space, and ext4 guest filesystem free/used space. Guest filesystem metrics are read only while the exclusive disk lease is available; they are shown as unavailable while the VM is active.
 - User-selected ext4 disk export acquires the exclusive guest disk lease before opening the destination and copies the image byte for byte; Android unit tests verify it is blocked while a VM owns the disk.
+- Guest disk import validates the ext4 superblock in a staging file, preserves the current disk on failure, and atomically replaces it under the exclusive lease. Growth is staged and atomic; boot-time online ext4 expansion is verified by enlarging an isolated CI disk, cleanly shutting down, and reading the resulting superblock capacity.
+- Ext4 capacity/free-space parsing bounds 64-bit block counts against the image length before multiplication; regression tests reject overflowed restore metadata without changing the current disk.
 - Home-screen widget start/stop actions and live service status.
 - Terminal password prompts use masked input; submitted input is cleared and terminal contents remain in memory only.
 - A bounded private diagnostic event history records start/stop requests, runtime gate blocks, and lifecycle changes using timestamps and enum-only details; the export omits free-form runtime and terminal data.
@@ -30,13 +30,16 @@ Updated: 2026-10-20
 
 ## Remaining validation
 
-- Retest QEMU boot on physical ARM64 Android using the latest diagnostic APKs. The current workspace has no adb/device connection, and CI only provides an x86_64 Android emulator.
-- The physical instrumentation test provisions a temporary throwaway guest disk so it does not set a test password on the user's persistent guest disk. After the runtime gate opens, use the app terminal to verify first-run login on the user's own persistent disk, package installation, and Android-side localhost access.
-- Measure boot time, memory use, and battery impact on physical ARM64 hardware. Validate LAN exposure across network transitions; custom kernels and secure remote access remain later work.
+- Run the consolidated ARM64 instrumentation test on the Vivo I2501 using a successful push run’s APKs. It checks QEMU launch, Alpine first-run password setup, non-root login, clean shutdown, and same-disk persistence after restart.
+- After the runtime gate opens, validate the user's own persistent guest disk, package installation, and Android-side localhost access.
+- Measure boot time, memory use, and battery impact on physical ARM64 hardware. Validate LAN exposure across network transitions.
 - Do not merge or release without explicit approval.
-f9eee403ac862f15d2ece07da6167629d184b3be
-
 
 ## Latest physical-device follow-up (v8)
 
 The v8 log shows first boot and QMP exit succeed, then second boot stops at `Mounting root:` before ext4 reports a mount. The next candidate requests a clean poweroff from Alpine before reopening the image, adds immediate detection for a repeated first-run prompt, retains bounded serial tails in the private journal, and moves timeout interruption ahead of process cleanup. Host and Android-emulator CI do not establish the Vivo second boot; keep the ARM64 guest runtime gate closed until that device test passes.
+
+
+## Latest CI candidate (2026-10-25)
+
+Commit `51b4eb50252ec60f126f724d6f547b5594643145`, workflow run #289, passed both CI jobs. This candidate includes the ext4 overflow parser hardening. CI is not evidence of Vivo ARM64 guest success; the physical runtime gate remains closed.
