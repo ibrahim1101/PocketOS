@@ -537,7 +537,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         stderr: BoundedDiagnosticCapture,
     ) {
         reportStage("Requesting clean Alpine guest poweroff")
-        process.writeSerial("pocketos-shutdown\\n".toByteArray(Charsets.UTF_8))
+        process.writeSerial("pocketos-shutdown\n".toByteArray(Charsets.UTF_8))
         assertTrue(
             "Alpine did not finish its clean guest poweroff. ${diagnosticSummary(process, console, stderr)}",
             process.awaitExit(GUEST_POWEROFF_TIMEOUT_SECONDS, TimeUnit.SECONDS),
@@ -841,12 +841,19 @@ class QemuAndroidRuntimeInstrumentationTest {
         try {
             val snapshot = runCatching { diagnosticSummary(process, console, stderr) }
                 .getOrElse { "diagnosticsUnavailable(${it.javaClass.simpleName}); exitStatus=${process.exitStatusLabel()}" }
-            // Kill before reporting through the instrumentation status channel. ADB or
-            // the host runner can stop consuming that channel while a timeout unwinds.
-            val stopped = runCatching {
+            process.expectOutputClosure()
+            val stopTask = FutureTask {
                 process.forceStop(timeout = CLEANUP_TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
-            }.getOrElse {
-                Log.e(TAG, "QEMU force-stop failed stage=$stage type=${it.javaClass.simpleName}")
+            }
+            Thread(stopTask, "pocketos-cleanup-$stage").apply {
+                isDaemon = true
+                start()
+            }
+            val stopped = try {
+                stopTask.get(CLEANUP_TIMEOUT_SECONDS + 2, TimeUnit.SECONDS)
+            } catch (failure: Exception) {
+                stopTask.cancel(true)
+                Log.e(TAG, "QEMU force-stop did not finish within its bound stage=$stage type=${failure.javaClass.simpleName}")
                 false
             }
             val pumpsStopped = runCatching { process.awaitOutputPumps(2, TimeUnit.SECONDS) }.getOrDefault(false)

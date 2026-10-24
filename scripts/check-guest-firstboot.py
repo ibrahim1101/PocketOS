@@ -196,9 +196,8 @@ def main() -> int:
         )
         stage = "first-login persistence write and sync"
         wait_for(process, master_fd, buffer, b"__POCKETOS_FIRST_LOGIN_SYNCED__", args.timeout)
-        first_boot_completed = True
         stage = "clean guest poweroff"
-        os.write(master_fd, b"pocketos-shutdown\\n")
+        os.write(master_fd, b"pocketos-shutdown\n")
         shutdown_deadline = time.monotonic() + min(args.timeout, 30)
         while process.poll() is None and time.monotonic() < shutdown_deadline:
             time.sleep(0.1)
@@ -206,6 +205,7 @@ def main() -> int:
             raise TimeoutError("guest did not power off cleanly after the shutdown request")
         if process.returncode != 0:
             raise RuntimeError(f"QEMU exited with status {process.returncode} during guest poweroff")
+        first_boot_completed = True
     except (RuntimeError, TimeoutError):
         print(f"First-boot account setup failed at {stage}.", file=sys.stderr)
         print(f"Sanitized serial tail: {sanitized_serial_tail(buffer, password)!r}", file=sys.stderr)

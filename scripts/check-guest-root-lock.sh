@@ -37,6 +37,9 @@ if grep -Eq '^::(sysinit|wait):/sbin/openrc (boot|default)' <<< "$inittab"; then
   echo "OpenRC boot/default must not block BusyBox init before the serial console" >&2
   exit 1
 fi
+setup="$(debugfs -R "cat /usr/local/sbin/pocketos-firstboot" "$image" 2>/dev/null)"
+early_init="$(debugfs -R "cat /usr/local/sbin/pocketos-early-init" "$image" 2>/dev/null)"
+openrc_start="$(debugfs -R "cat /usr/local/sbin/pocketos-openrc-start" "$image" 2>/dev/null)"
 shutdown_watch="$(debugfs -R "cat /usr/local/sbin/pocketos-shutdown-watch" "$image" 2>/dev/null)"
 shutdown_command="$(debugfs -R "cat /usr/local/bin/pocketos-shutdown" "$image" 2>/dev/null)"
 grep -Fq 'pocketos-shutdown-request' <<< "$early_init" || {
@@ -55,9 +58,6 @@ grep -Fq 'printf shutdown' <<< "$shutdown_command" || {
   echo "Guest shutdown command does not request the constrained poweroff action" >&2
   exit 1
 }
-setup="$(debugfs -R "cat /usr/local/sbin/pocketos-firstboot" "$image" 2>/dev/null)"
-early_init="$(debugfs -R "cat /usr/local/sbin/pocketos-early-init" "$image" 2>/dev/null)"
-openrc_start="$(debugfs -R "cat /usr/local/sbin/pocketos-openrc-start" "$image" 2>/dev/null)"
 grep -Fq "passwd pocketos" <<< "$setup" || {
   echo "Guest first-run account setup does not set a password interactively" >&2
   exit 1
