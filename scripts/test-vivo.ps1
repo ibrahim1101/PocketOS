@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Sanitize-Diagnostics.ps1")
 $Repo = "ibrahim1101/PocketOS"
 $Commit = ""
 $Failed = [System.Collections.Generic.List[string]]::new()
@@ -89,12 +90,7 @@ function Stop-DeviceTestProcesses([string]$DeviceSerial) {
 
 function Save-Text([string]$Name, [string]$Text) {
   $path = Join-Path $OutputDirectory $Name
-  $safe = $Text -replace '(?im)(password|passwd|token|secret|private[_ -]?key)(\s*[:=]\s*)\S+', '$1$2[REDACTED]'
-  $safe = $safe -replace '(?i)/(?:data/user(?:_de)?/\d+|data/data)/com\.pocketos\.app(?:[^\s,;]*)?', '<app-private>'
-  $privatePaths = @($env:USERPROFILE, $env:LOCALAPPDATA, $OutputDirectory)
-  foreach ($privatePath in $privatePaths) {
-    if ($privatePath) { $safe = $safe.Replace($privatePath, '<local-private>') }
-  }
+  $safe = ConvertTo-PocketOsSanitizedText -Text $Text -PrivatePaths @($env:USERPROFILE, $env:LOCALAPPDATA, $OutputDirectory)
   $safe | Set-Content -Encoding utf8 $path
   return $path
 }

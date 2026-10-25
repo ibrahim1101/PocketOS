@@ -240,6 +240,9 @@ jobs:
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
+      - name: Test diagnostic sanitization
+        shell: pwsh
+        run: ./scripts/test-vivo-sanitizer.ps1
       - name: Fetch and verify pinned Android QEMU source
         run: |
           bash scripts/fetch-android-qemu-source.sh "$RUNNER_TEMP/qemu-11.1.2"
