@@ -7,7 +7,6 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
-import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.DigestInputStream
@@ -50,7 +49,9 @@ class GuestAssetInstaller(
 
         val rootDisk = File(guestDirectory, ROOT_DISK)
         val seedDiskCreated = if (rootDisk.exists()) {
-            check(isExt4(rootDisk)) { "Existing guest disk is not valid ext4; preserving it" }
+            check(GuestDiskManager.ext4Capacity(rootDisk) != null) {
+                "Existing guest disk is not valid ext4; preserving it"
+            }
             false
         } else {
             check(filesDirectory.usableSpace >= minimumFreeBytes) {
@@ -120,7 +121,9 @@ class GuestAssetInstaller(
                 "Packaged guest asset failed integrity verification: $COMPRESSED_DISK"
             }
             FileOutputStream(temporary, true).use { it.fd.sync() }
-            check(isExt4(temporary)) { "Packaged Linux disk is not a valid ext4 image" }
+            check(GuestDiskManager.ext4Capacity(temporary) != null) {
+                "Packaged Linux disk is not a valid ext4 image"
+            }
             moveAtomically(temporary, destination)
             return true
         } finally {
@@ -164,18 +167,6 @@ class GuestAssetInstaller(
         return rows
     }
 
-    private fun isExt4(file: File): Boolean {
-        if (!file.isFile || file.length() < EXT4_MAGIC_OFFSET + 2) return false
-        return try {
-            RandomAccessFile(file, "r").use { disk ->
-                disk.seek(EXT4_MAGIC_OFFSET)
-                disk.readUnsignedByte() == 0x53 && disk.readUnsignedByte() == 0xEF
-            }
-        } catch (_: Exception) {
-            false
-        }
-    }
-
     private fun moveAtomically(source: File, destination: File) {
         Files.move(source.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
     }
@@ -194,7 +185,6 @@ class GuestAssetInstaller(
         private const val INITRAMFS = "initramfs-virt"
         private const val COMPRESSED_DISK = "rootfs.ext4.gzip"
         private const val ROOT_DISK = "rootfs.ext4"
-        private const val EXT4_MAGIC_OFFSET = 1024L + 56L
         private const val MINIMUM_FREE_BYTES = 288L * 1024L * 1024L
         private val REQUIRED_ASSETS = setOf(KERNEL, INITRAMFS, COMPRESSED_DISK)
         private val MANIFEST_ROW = Regex("^([0-9a-f]{64})  ([A-Za-z0-9._-]+)$")
