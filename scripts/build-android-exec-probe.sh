@@ -25,7 +25,8 @@ for abi in arm64-v8a x86_64; do
   abi_dir="$output_root/$abi"
   mkdir -p "$abi_dir"
   executable="$abi_dir/libpocketos_exec_probe.so"
-  "$compiler" -std=c11 -Wall -Wextra -Werror -fPIE -pie "$source_file" -o "$executable"
+  "$compiler" -std=c11 -Wall -Wextra -Werror -fPIE -pie \
+    -Wl,--dynamic-linker=/system/bin/linker64 "$source_file" -o "$executable"
 
   if ! "$toolchain/llvm-readelf" -h "$executable" | grep -Eq 'Type:.*DYN'; then
     echo "Expected an Android PIE executable for $abi" >&2
