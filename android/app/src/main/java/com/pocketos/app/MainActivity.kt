@@ -29,6 +29,7 @@ class MainActivity : Activity() {
     private lateinit var terminalSend: Button
     private lateinit var terminalOutput: TextView
     private val terminalBuffer = StringBuilder()
+    private val terminalInputModeDetector = TerminalInputModeDetector()
     private var vmStatus = "Blocked until ARM64 runtime validation passes"
 
     private val statusReceiver = object : BroadcastReceiver() {
@@ -419,9 +420,9 @@ class MainActivity : Activity() {
             terminalBuffer.delete(0, terminalBuffer.length - MAX_TERMINAL_CHARS)
         }
         terminalOutput.text = terminalBuffer.toString()
-        if (text.contains("password", ignoreCase = true)) {
+        if (terminalInputModeDetector.append(text)) {
             terminalInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        } else if (text.contains("login", ignoreCase = true) || text.contains("$", ignoreCase = true) || text.contains("#", ignoreCase = true)) {
+        } else {
             terminalInput.inputType = InputType.TYPE_CLASS_TEXT
         }
         terminalOutput.post { (terminalOutput.parent as? ScrollView)?.fullScroll(ViewGroup.FOCUS_DOWN) }
