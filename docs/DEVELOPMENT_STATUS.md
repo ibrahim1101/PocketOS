@@ -6,7 +6,7 @@ Updated: 2026-10-25
 
 - Active work: physical ARM64 runtime validation on the Vivo I2501. M0-M9 feature implementation is CI-verified; public tunneling and custom kernels remain deferred.
 - Active branch: feat/m1-linux-boot; PR #1 remains open.
-- Latest fully successful workflow: run #289 (commit 51b4eb50252ec60f126f724d6f547b5594643145). It cross-built Android ARM64 QEMU, packaged the Alpine guest, passed host guest boot and persistence checks, built both APKs from the same commit, passed the APK ABI audit, and passed Android emulator instrumentation.
+- Latest fully successful push workflow: run #303 (commit `19ca3f20022f191625b0edc55cadbe581892ce8d`). PR run #304 for the same commit also passed. Run #303 cross-built Android ARM64 QEMU, verified the exact packaged Alpine assets under host QEMU, passed guest boot/persistence/network workload checks, built both APKs from the same commit, passed the ABI audit, and passed Android emulator instrumentation. The push artifacts are `pocketos-android-apk-19ca3f20022f191625b0edc55cadbe581892ce8d`, `pocketos-instrumentation-apk-19ca3f20022f191625b0edc55cadbe581892ce8d`, and `pocketos-test-handoff-19ca3f20022f191625b0edc55cadbe581892ce8d` (expire 2026-11-08).
 - Run artifacts contain the signed debug app APK, instrumentation APK, build identity, APK checksums, and emulator reports. The trusted branch debug signing identity is retained so updates install with `adb install -r`.
 - CI verified guest ext4 growth from an enlarged image through online `resize2fs`, first-run setup, clean poweroff, and same-disk login after reboot. Android-side ext4 restore/storage parsing also rejects overflowing 64-bit filesystem metadata.
 - Host QEMU and the x86_64 Android emulator do not establish ARM64 guest boot on Android. The Vivo runtime gate remains closed until the physical instrumentation workflow passes.
@@ -42,4 +42,4 @@ The v8 log shows first boot and QMP exit succeed, then second boot stops at `Mou
 
 ## Latest CI candidate (2026-10-25)
 
-Commit `51b4eb50252ec60f126f724d6f547b5594643145`, workflow run #289, passed both CI jobs. This candidate includes the ext4 overflow parser hardening. CI is not evidence of Vivo ARM64 guest success; the physical runtime gate remains closed.
+Commit `19ca3f20022f191625b0edc55cadbe581892ce8d`, push workflow run [#303](https://github.com/ibrahim1101/PocketOS/actions/runs/40175789665), and PR workflow run [#304](https://github.com/ibrahim1101/PocketOS/actions/runs/40175791788) passed. This candidate includes ext4 metadata validation before export and installation, terminal password masking across serial read boundaries, the QEMU cleanup regression expectation fix, and an explicit Android linker path for the executable probe. CI is not evidence of Vivo ARM64 guest success; the physical runtime gate remains closed.
