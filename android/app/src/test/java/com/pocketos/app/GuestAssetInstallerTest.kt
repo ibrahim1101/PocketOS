@@ -2,6 +2,7 @@ package com.pocketos.app
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.zip.GZIPOutputStream
