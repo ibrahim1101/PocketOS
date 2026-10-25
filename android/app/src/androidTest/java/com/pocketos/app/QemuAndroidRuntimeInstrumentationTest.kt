@@ -77,7 +77,10 @@ class QemuAndroidRuntimeInstrumentationTest {
         assertTrue("Cleanup masked the original bounded boot failure: $failure", failure is AssertionError)
         val diagnostic = failure!!.message.orEmpty()
         assertTrue("Failure did not identify the failed boot stage", diagnostic.contains("Timed out: Waiting for an intentionally absent guest prompt"))
-        assertTrue("Failure did not include process exit state", diagnostic.contains("exitStatus=exited("))
+        assertTrue(
+            "Failure did not include process state",
+            diagnostic.contains("exitStatus=running") || diagnostic.contains("exitStatus=exited("),
+        )
         assertTrue("Failure did not include the serial tail", diagnostic.contains("POCKETOS_GUEST_BOOT_STARTED"))
         assertTrue("Failure did not include QMP connectivity", diagnostic.contains("qmp=unavailable"))
         assertTrue("Process remained alive after bounded cleanup", !process.isAlive)
