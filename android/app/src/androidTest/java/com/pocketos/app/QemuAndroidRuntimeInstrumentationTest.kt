@@ -393,19 +393,40 @@ class QemuAndroidRuntimeInstrumentationTest {
             Log.e(TAG, "independent test deadline exceeded; stage=$failedStage killed=$stopped/${active.size}; test interrupted")
         }
         journal.record("test-start", "runId=$validationId timeoutMs=$TEST_WATCHDOG_TIMEOUT_MS")
+        val heartbeatCount = AtomicLong(0)
+        val diagnosticSnapshotRunning = AtomicBoolean(false)
         val heartbeat = IndependentHeartbeat(HEARTBEAT_INTERVAL_MS) {
             val active = synchronized(activeProcesses) { activeProcesses.toList() }
             if (active.isEmpty()) {
                 journal.record("heartbeat", "stage=$activeStage qemu=not-yet-started")
             } else {
                 val guest = active.lastOrNull { it.process.isAlive } ?: active.last()
-                val snapshot = runCatching {
-                    diagnosticSummary(guest.process, guest.console, guest.stderr, includeSerialTail = true)
-                }.getOrElse { "exitStatus=${guest.process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
-                journal.record("heartbeat", "stage=$activeStage $snapshot")
-                // Keep serial tails and procfs thread detail in the bounded private journal.
-                // Repeating multi-kilobyte snapshots in logcat can evict the final failure.
-                Log.i(TAG, "independent heartbeat stage=$activeStage exitStatus=${guest.process.exitStatusLabel()} ${guest.console.progressSummary()}")
+                val pulse = heartbeatCount.incrementAndGet()
+                val progress = "stage=$activeStage exitStatus=${guest.process.exitStatusLabel()} ${guest.console.progressSummary()}"
+                // Emit this before any procfs or QMP work. A blocked diagnostic must not
+                // suppress subsequent serial progress or the independent stage deadline.
+                Log.i(TAG, "independent heartbeat $progress")
+                journal.record("heartbeat-progress", progress)
+                if (pulse % HEARTBEAT_TAIL_EVERY == 0L) {
+                    val serialTail = guest.console.diagnosticTail().takeLast(HEARTBEAT_SERIAL_TAIL_CHARS)
+                    journal.record("heartbeat-serial", "stage=$activeStage tail=$serialTail")
+                    Log.i(TAG, "serial heartbeat stage=$activeStage tail=$serialTail")
+                }
+                if (pulse % HEARTBEAT_DIAGNOSTICS_EVERY == 0L && diagnosticSnapshotRunning.compareAndSet(false, true)) {
+                    Thread({
+                        try {
+                            val snapshot = runCatching {
+                                diagnosticSummary(guest.process, guest.console, guest.stderr, includeSerialTail = true)
+                            }.getOrElse { "exitStatus=${guest.process.exitStatusLabel()} diagnosticsUnavailable=${it.javaClass.simpleName}" }
+                            journal.record("heartbeat-diagnostics", "stage=$activeStage $snapshot")
+                        } finally {
+                            diagnosticSnapshotRunning.set(false)
+                        }
+                    }, "pocketos-heartbeat-diagnostics").apply {
+                        isDaemon = true
+                        start()
+                    }
+                }
             }
         }
 
@@ -466,6 +487,7 @@ class QemuAndroidRuntimeInstrumentationTest {
                 verifyGuestAccountAndPersistentMarker(firstConsole, firstProcess, firstStderr, writePersistenceProbe = true)
                 synchronizeGuestDisk(firstProcess, firstConsole, firstStderr)
                 gracefulGuestPoweroff(firstProcess, firstConsole, firstStderr)
+                synchronizeHostDisk(disk)
             } finally {
                 stopIfStillRunning("first boot", firstProcess, firstConsole, firstStderr)
                 runCatching { firstLease.close() }
@@ -532,6 +554,13 @@ class QemuAndroidRuntimeInstrumentationTest {
         val marker = "__POCKETOS_GUEST_SYNC_COMPLETE__"
         process.writeSerial("sync && echo $marker\n".toByteArray(Charsets.UTF_8))
         awaitStage("Waiting for guest filesystem sync", marker, console, process, stderr, PROMPT_TIMEOUT_MS)
+    }
+
+    /** Flush Android's file cache after QEMU exits, before releasing and reopening the same image. */
+    private fun synchronizeHostDisk(disk: File) {
+        java.io.RandomAccessFile(disk, "rw").use { image -> image.fd.sync() }
+        assertTrue("Persistent ext4 disk changed or became unreadable after shutdown", isExt4(disk))
+        activeJournal?.record("host-disk-sync", "fsync=complete ext4=valid bytes=${disk.length()}")
     }
 
     private fun gracefulGuestPoweroff(
@@ -903,6 +932,9 @@ class QemuAndroidRuntimeInstrumentationTest {
         private const val WATCHDOG_KILL_TIMEOUT_SECONDS = 2L
         private const val DIAGNOSTIC_SNAPSHOT_TIMEOUT_MS = 2_000L
         private const val HEARTBEAT_INTERVAL_MS = 5_000L
+        private const val HEARTBEAT_TAIL_EVERY = 3L
+        private const val HEARTBEAT_DIAGNOSTICS_EVERY = 3L
+        private const val HEARTBEAT_SERIAL_TAIL_CHARS = 1_200
         private const val REAL_QEMU_STALL_TIMEOUT_MS = 5_000L
         private const val REAL_QEMU_STALL_HEARTBEAT_MS = 1_000L
         private const val REAL_QEMU_STALL_TEST_CEILING_MS = 20_000L

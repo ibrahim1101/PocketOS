@@ -50,10 +50,20 @@ grep -Fq 'chmod 0666 /run/pocketos-shutdown-request' <<< "$early_init" || {
   echo "Guest shutdown request is not writable by pocketos" >&2
   exit 1
 }
-grep -Fq 'poweroff -f' <<< "$shutdown_watch" || {
-  echo "Guest shutdown watcher does not perform a kernel poweroff" >&2
+grep -Fq '/sbin/poweroff' <<< "$shutdown_watch" || {
+  echo "Guest shutdown watcher does not request orderly poweroff through init" >&2
   exit 1
 }
+if grep -Fq '/sbin/poweroff -f' <<< "$shutdown_watch"; then
+  echo "Guest shutdown watcher bypasses init and filesystem unmount actions" >&2
+  exit 1
+fi
+sync_line="$(grep -n '^[[:space:]]*sync[[:space:]]*$' <<< "$shutdown_watch" | head -n 1 | cut -d: -f1)"
+poweroff_line="$(grep -n '^[[:space:]]*/sbin/poweroff[[:space:]]*$' <<< "$shutdown_watch" | head -n 1 | cut -d: -f1)"
+if [[ -z "$sync_line" || -z "$poweroff_line" || "$sync_line" -ge "$poweroff_line" ]]; then
+  echo "Guest shutdown watcher must sync storage before orderly poweroff" >&2
+  exit 1
+fi
 grep -Fq 'printf shutdown' <<< "$shutdown_command" || {
   echo "Guest shutdown command does not request the constrained poweroff action" >&2
   exit 1

@@ -138,7 +138,7 @@ Review the files before sharing. Do not attach passwords, private keys, or an ex
 3. Asset integrity and disk initialization: the app-private installer initializes a valid ext4 seed; the test verifies the compressed seed hash before creating its isolated copy.
 4. Guest boot and serial readiness: Alpine reaches `New password:` or `pocketos login:` within 180 seconds. The runner reports the stage as it proceeds.
 5. First-run setup and login: the test sends an ephemeral random credential over serial, waits for setup completion, logs in as pocketos, and verifies a non-root UID.
-6. Persistence: the test requests a clean guest poweroff after the first login, boots the same isolated disk again, logs in, and verifies the setup marker and non-root account persist.
+6. Persistence: the test requests an orderly guest poweroff through init after the first login, fsyncs the Android backing image after QEMU exits, boots the same isolated disk again, logs in, and verifies the setup marker and non-root account persist.
 7. Graceful shutdown: Alpine syncs and powers off through the root-owned shutdown watcher; QEMU exits with status 0 before the disk lease is released.
 8. Failure diagnostics and cleanup: Android instrumentation verifies stdout/stderr capture after a simulated guest boot failure, nonzero exit status, concurrent pipe closure during force-stop, and isolation from output-consumer exceptions.
 9. Bounded duration and cleanup: the complete Alpine workflow ends within the 4-minute independent watchdog deadline; the production controller also stops a guest that fails to reach readiness within 180 seconds. The test reports the last stage and sanitized bounded serial/stderr tails; the watchdog terminates QEMU even if the instrumentation thread is blocked.
