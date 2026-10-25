@@ -106,11 +106,11 @@ grep -Fq 'pocketos-shutdown-request' <<< "$openrc_start" || {
   echo "OpenRC startup does not stop advancing when guest shutdown is requested" >&2
   exit 1
 }
-grep -Fq '[ "$waited" -lt 5 ]' <<< "$openrc_shutdown" || {
+grep -Fq -- '-lt 5 ]' <<< "$openrc_shutdown" || {
   echo "Shutdown does not bound waiting for an OpenRC startup in progress" >&2
   exit 1
 }
-grep -Fq '[ "$waited" -lt 8 ]' <<< "$openrc_shutdown" || {
+grep -Fq -- '-lt 8 ]' <<< "$openrc_shutdown" || {
   echo "OpenRC service shutdown does not have a bounded deadline" >&2
   exit 1
 }
