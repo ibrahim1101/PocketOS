@@ -33,6 +33,10 @@ grep -Fq "::once:/usr/local/sbin/pocketos-openrc-start" <<< "$inittab" || {
   echo "Guest OpenRC startup is not isolated from serial console readiness" >&2
   exit 1
 }
+grep -Fq "::shutdown:/usr/local/sbin/pocketos-openrc-shutdown" <<< "$inittab" || {
+  echo "Guest shutdown does not use the bounded OpenRC shutdown wrapper" >&2
+  exit 1
+}
 if grep -Eq '^::(sysinit|wait):/sbin/openrc (boot|default)' <<< "$inittab"; then
   echo "OpenRC boot/default must not block BusyBox init before the serial console" >&2
   exit 1
@@ -40,6 +44,7 @@ fi
 setup="$(debugfs -R "cat /usr/local/sbin/pocketos-firstboot" "$image" 2>/dev/null)"
 early_init="$(debugfs -R "cat /usr/local/sbin/pocketos-early-init" "$image" 2>/dev/null)"
 openrc_start="$(debugfs -R "cat /usr/local/sbin/pocketos-openrc-start" "$image" 2>/dev/null)"
+openrc_shutdown="$(debugfs -R "cat /usr/local/sbin/pocketos-openrc-shutdown" "$image" 2>/dev/null)"
 shutdown_watch="$(debugfs -R "cat /usr/local/sbin/pocketos-shutdown-watch" "$image" 2>/dev/null)"
 shutdown_command="$(debugfs -R "cat /usr/local/bin/pocketos-shutdown" "$image" 2>/dev/null)"
 grep -Fq 'pocketos-shutdown-request' <<< "$early_init" || {
@@ -87,6 +92,26 @@ grep -Fq 'echo ready > /run/pocketos-user-login-ready' <<< "$profile" || {
 }
 grep -Fq 'chmod 0666 /run/pocketos-user-login-ready' <<< "$early_init" || {
   echo "Guest login readiness marker is not writable by the non-root PocketOS account" >&2
+  exit 1
+}
+grep -Fq 'pocketos-openrc-start-state' <<< "$early_init" || {
+  echo "Guest early init does not initialize OpenRC startup coordination" >&2
+  exit 1
+}
+grep -Fq 'pocketos-openrc-start-state' <<< "$openrc_start" || {
+  echo "OpenRC startup does not publish its activity state" >&2
+  exit 1
+}
+grep -Fq 'pocketos-shutdown-request' <<< "$openrc_start" || {
+  echo "OpenRC startup does not stop advancing when guest shutdown is requested" >&2
+  exit 1
+}
+grep -Fq '[ "$waited" -lt 5 ]' <<< "$openrc_shutdown" || {
+  echo "Shutdown does not bound waiting for an OpenRC startup in progress" >&2
+  exit 1
+}
+grep -Fq '[ "$waited" -lt 8 ]' <<< "$openrc_shutdown" || {
+  echo "OpenRC service shutdown does not have a bounded deadline" >&2
   exit 1
 }
 if ! grep -Fq '/run/pocketos-user-login-ready' <<< "$openrc_start"; then

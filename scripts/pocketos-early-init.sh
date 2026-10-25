@@ -44,4 +44,7 @@ fi
 # pocketos login to release it without running device services before getty.
 (umask 000; : > /run/pocketos-user-login-ready)
 chmod 0666 /run/pocketos-user-login-ready
+# BusyBox init starts OpenRC asynchronously. Its state marker lets the shutdown
+# action avoid racing an in-progress startup (OpenRC serializes both operations).
+printf pending > /run/pocketos-openrc-start-state
 echo "PocketOS: persistent root filesystem is writable" >/dev/console

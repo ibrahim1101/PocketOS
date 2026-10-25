@@ -37,6 +37,7 @@ docker run --rm --platform linux/arm64 -e SIZE_MB -e ALPINE_REPOSITORY_BRANCH="$
   mkdir -p /guest/usr/local/sbin /guest/usr/local/bin
   install -m 755 /source/scripts/pocketos-early-init.sh /guest/usr/local/sbin/pocketos-early-init
   install -m 755 /source/scripts/pocketos-openrc-start.sh /guest/usr/local/sbin/pocketos-openrc-start
+  install -m 755 /source/scripts/pocketos-openrc-shutdown.sh /guest/usr/local/sbin/pocketos-openrc-shutdown
   install -m 755 /source/scripts/pocketos-firstboot.sh /guest/usr/local/sbin/pocketos-firstboot
   install -m 755 /source/scripts/pocketos-shutdown-watch.sh /guest/usr/local/sbin/pocketos-shutdown-watch
   install -m 755 /source/scripts/pocketos-shutdown.sh /guest/usr/local/bin/pocketos-shutdown
@@ -56,7 +57,7 @@ EOF
 ::once:/usr/local/sbin/pocketos-openrc-start
 ttyAMA0::respawn:/usr/local/sbin/pocketos-firstboot
 ::ctrlaltdel:/sbin/reboot
-::shutdown:/sbin/openrc shutdown
+::shutdown:/usr/local/sbin/pocketos-openrc-shutdown
 EOF
   ln -sf /etc/init.d/networking /guest/etc/runlevels/boot/networking
   ln -sf /etc/init.d/hostname /guest/etc/runlevels/boot/hostname

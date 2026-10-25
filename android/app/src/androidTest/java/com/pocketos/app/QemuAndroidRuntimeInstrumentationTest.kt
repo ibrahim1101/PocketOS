@@ -584,10 +584,21 @@ class QemuAndroidRuntimeInstrumentationTest {
     ) {
         reportStage("Requesting clean Alpine guest poweroff")
         process.writeSerial("pocketos-shutdown\n".toByteArray(Charsets.UTF_8))
-        assertTrue(
-            "Alpine did not finish its clean guest poweroff. ${diagnosticSummary(process, console, stderr)}",
-            process.awaitExit(GUEST_POWEROFF_TIMEOUT_SECONDS, TimeUnit.SECONDS),
-        )
+        if (!process.awaitExit(GUEST_POWEROFF_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            val snapshot = diagnosticSummary(process, console, stderr)
+            activeJournal?.record("guest-poweroff-timeout", snapshot)
+            process.expectOutputClosure()
+            val stopped = runCatching {
+                process.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            }.getOrDefault(false)
+            val pumpsStopped = runCatching {
+                process.awaitOutputPumps(OUTPUT_PUMP_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            }.getOrDefault(false)
+            throw AssertionError(
+                "Alpine clean poweroff exceeded ${GUEST_POWEROFF_TIMEOUT_SECONDS}s; " +
+                    "forcedStop=$stopped outputPumpsStopped=$pumpsStopped $snapshot",
+            )
+        }
         assertEquals("QEMU did not exit cleanly after guest poweroff", 0, process.exitCode)
         assertTrue(
             "QEMU output pumps remained active after guest poweroff",
@@ -935,7 +946,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         private const val PROMPT_TIMEOUT_MS = 30_000L
         private const val QMP_TIMEOUT_MS = 5_000
         private const val QMP_EXIT_TIMEOUT_MS = 15L
-        private const val GUEST_POWEROFF_TIMEOUT_SECONDS = 30L
+        private const val GUEST_POWEROFF_TIMEOUT_SECONDS = 20L
         private const val MIN_TEST_STORAGE_BYTES = 600L * 1024L * 1024L
         private const val EXT4_MAGIC_OFFSET = 1080L
         private const val MAX_DIAGNOSTIC_CHARS = 4_096
