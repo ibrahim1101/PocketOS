@@ -558,7 +558,21 @@ class QemuAndroidRuntimeInstrumentationTest {
 
     /** Flush Android's file cache after QEMU exits, before releasing and reopening the same image. */
     private fun synchronizeHostDisk(disk: File) {
-        java.io.RandomAccessFile(disk, "rw").use { image -> image.fd.sync() }
+        val syncTask = FutureTask {
+            java.io.RandomAccessFile(disk, "rw").use { image -> image.fd.sync() }
+        }
+        Thread(syncTask, "pocketos-host-disk-sync").apply {
+            isDaemon = true
+            start()
+        }
+        try {
+            syncTask.get(HOST_DISK_SYNC_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        } catch (failure: TimeoutException) {
+            syncTask.cancel(true)
+            throw AssertionError("Android host disk flush exceeded its bounded deadline", failure)
+        } catch (failure: Exception) {
+            throw AssertionError("Android host disk flush failed", failure)
+        }
         assertTrue("Persistent ext4 disk changed or became unreadable after shutdown", isExt4(disk))
         activeJournal?.record("host-disk-sync", "fsync=complete ext4=valid bytes=${disk.length()}")
     }
@@ -935,8 +949,10 @@ class QemuAndroidRuntimeInstrumentationTest {
         private const val HEARTBEAT_TAIL_EVERY = 3L
         private const val HEARTBEAT_DIAGNOSTICS_EVERY = 3L
         private const val HEARTBEAT_SERIAL_TAIL_CHARS = 1_200
+        private const val HOST_DISK_SYNC_TIMEOUT_MS = 15_000L
         private const val REAL_QEMU_STALL_TIMEOUT_MS = 5_000L
         private const val REAL_QEMU_STALL_HEARTBEAT_MS = 1_000L
         private const val REAL_QEMU_STALL_TEST_CEILING_MS = 20_000L
     }
 }
+
