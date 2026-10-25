@@ -134,12 +134,11 @@ if ! grep -Fq 'hostname ' <<< "$early_init" || ! grep -Fq '/etc/hostname' <<< "$
   echo "Guest early init does not set the configured hostname before serial login" >&2
   exit 1
 fi
-for runlevel in sysinit boot default; do
-  grep -Fq "/sbin/openrc $runlevel" <<< "$openrc_start" || {
-    echo "Guest asynchronous OpenRC startup omits the $runlevel runlevel" >&2
+grep -Fq 'for runlevel in sysinit boot default; do' <<< "$openrc_start" &&
+  grep -Fq '/sbin/openrc "$runlevel"' <<< "$openrc_start" || {
+    echo "Guest asynchronous OpenRC startup does not invoke all required runlevels" >&2
     exit 1
   }
-done
 for service in fsck root localmount; do
   debugfs -R "stat /etc/runlevels/boot/$service" "$image" 2>/dev/null | grep -Fq 'Type: symlink' || {
     echo "Required writable-root service is not enabled in the boot runlevel: $service" >&2
