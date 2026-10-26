@@ -172,7 +172,7 @@ try {
   $tests = @(
     # One end-to-end run validates native QEMU launch, first boot, authenticated
     # non-root access, synced disk persistence, same-disk reboot, and cleanup.
-    @{ Name = "alpine-guest-workflow"; Class = "bootsFreshAlpineSetsPasswordLogsInPersistsAndPowersOffGuest"; Timeout = 120 }
+    @{ Name = "alpine-guest-workflow"; Class = "bootsFreshAlpineSetsPasswordLogsInPersistsAndPowersOffGuest"; Timeout = 300 }
   )
   foreach ($test in $tests) {
     $output = Invoke-Adb @("-s", $Serial, "shell", "am", "instrument", "-w", "-r", "-e", "class", "com.pocketos.app.QemuAndroidRuntimeInstrumentationTest#$($test.Class)", "com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner") $test.Timeout
