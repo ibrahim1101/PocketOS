@@ -73,6 +73,22 @@ grep -Fq 'printf shutdown' <<< "$shutdown_command" || {
   echo "Guest shutdown command does not request the constrained poweroff action" >&2
   exit 1
 }
+grep -Fq 'POCKETOS_SHUTDOWN_REQUESTED' <<< "$shutdown_command" || {
+  echo "Guest shutdown command does not acknowledge the accepted request" >&2
+  exit 1
+}
+grep -Fq 'POCKETOS_SHUTDOWN_WATCHER_ACCEPTED' <<< "$shutdown_watch" || {
+  echo "Guest root shutdown watcher does not expose request acceptance" >&2
+  exit 1
+}
+grep -Fq 'POCKETOS_GUEST_SYNC_COMPLETE' <<< "$shutdown_watch" || {
+  echo "Guest root shutdown watcher does not expose the completed filesystem sync" >&2
+  exit 1
+}
+grep -Fq 'POCKETOS_INIT_SHUTDOWN_ACTION_COMPLETE' <<< "$openrc_shutdown" || {
+  echo "Guest init shutdown wrapper does not report completion" >&2
+  exit 1
+}
 grep -Fq "passwd pocketos" <<< "$setup" || {
   echo "Guest first-run account setup does not set a password interactively" >&2
   exit 1

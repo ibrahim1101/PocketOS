@@ -322,6 +322,41 @@ class QemuAndroidRuntimeInstrumentationTest {
     }
 
     @Test
+    fun serialWriteTimeoutTerminatesAChildThatDoesNotReadInput() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val socket = File(context.cacheDir, "qmp-blocked-serial-${UUID.randomUUID()}.sock")
+        val console = SerialCapture("ephemeral-serial-secret", socket)
+        val stderr = BoundedDiagnosticCapture()
+        val process = NativeProcessSupervisor().start(
+            command = listOf("/system/bin/sh", "-c", "exec sleep 30"),
+            onSerialOutput = console::receive,
+            onDiagnosticOutput = stderr::append,
+        )
+        try {
+            val failure = runCatching {
+                writeSerialBounded(
+                    "blocked serial writer regression",
+                    process,
+                    ByteArray(1024 * 1024),
+                    console,
+                    stderr,
+                    timeoutMs = 250,
+                )
+            }.exceptionOrNull()
+            assertNotNull("Blocked serial input was not bounded", failure)
+            assertTrue(
+                "Blocked serial input did not report its stage: $failure",
+                failure!!.message.orEmpty().contains("serial write exceeded 250ms"),
+            )
+            assertFalse("Child survived bounded serial-write cleanup", process.isAlive)
+            assertTrue("Output pumps survived bounded serial-write cleanup", process.awaitOutputPumps(3, TimeUnit.SECONDS))
+        } finally {
+            if (process.isAlive) process.forceStop(2, TimeUnit.SECONDS)
+            runCatching { socket.delete() }
+        }
+    }
+
+    @Test
     fun packagedArm64QemuRunsOnAndroid() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val qemu = packagedQemu(context)
@@ -473,16 +508,16 @@ class QemuAndroidRuntimeInstrumentationTest {
                 awaitStage("Waiting for the first-run password prompt", "New password:", firstConsole, firstProcess, firstStderr, GUEST_BOOT_TIMEOUT_MS)
                 assertTrue("Guest readiness probe did not recognize first-run readiness", firstConsole.probe.isReady)
                 reportStage("Submitting an ephemeral password to the isolated guest disk")
-                firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
+                writeSerialBounded("first-run password", firstProcess, "$password\n".toByteArray(Charsets.UTF_8), firstConsole, firstStderr)
                 awaitStage("Waiting for password confirmation", "Retype password:", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
-                firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
+                writeSerialBounded("password confirmation", firstProcess, "$password\n".toByteArray(Charsets.UTF_8), firstConsole, firstStderr)
                 awaitStage("Waiting for first-run setup completion", "POCKETOS_FIRST_BOOT_COMPLETE", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
                 awaitStage("Waiting for the non-root login prompt", "pocketos login:", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
 
                 reportStage("Logging in as pocketos and checking account and disk marker")
-                firstProcess.writeSerial("pocketos\n".toByteArray(Charsets.UTF_8))
+                writeSerialBounded("first login", firstProcess, "pocketos\n".toByteArray(Charsets.UTF_8), firstConsole, firstStderr)
                 awaitStage("Waiting for the account password prompt", "Password:", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
-                firstProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
+                writeSerialBounded("first account password", firstProcess, "$password\n".toByteArray(Charsets.UTF_8), firstConsole, firstStderr)
                 awaitStage("Waiting for the account shell", "$ ", firstConsole, firstProcess, firstStderr, PROMPT_TIMEOUT_MS)
                 verifyGuestAccountAndPersistentMarker(firstConsole, firstProcess, firstStderr, writePersistenceProbe = true)
                 synchronizeGuestDisk(firstProcess, firstConsole, firstStderr)
@@ -506,9 +541,9 @@ class QemuAndroidRuntimeInstrumentationTest {
                 assertFalse("First-run password setup repeated after restart", secondConsole.diagnosticTail().contains("New password:"))
                 assertTrue("Readiness probe did not recognize login readiness", secondConsole.probe.isReady)
 
-                secondProcess.writeSerial("pocketos\n".toByteArray(Charsets.UTF_8))
+                writeSerialBounded("persisted login", secondProcess, "pocketos\n".toByteArray(Charsets.UTF_8), secondConsole, secondStderr)
                 awaitStage("Waiting for the persisted account password prompt", "Password:", secondConsole, secondProcess, secondStderr, PROMPT_TIMEOUT_MS)
-                secondProcess.writeSerial("$password\n".toByteArray(Charsets.UTF_8))
+                writeSerialBounded("persisted account password", secondProcess, "$password\n".toByteArray(Charsets.UTF_8), secondConsole, secondStderr)
                 awaitStage("Waiting for the persisted account shell", "$ ", secondConsole, secondProcess, secondStderr, PROMPT_TIMEOUT_MS)
                 verifyGuestAccountAndPersistentMarker(secondConsole, secondProcess, secondStderr)
                 synchronizeGuestDisk(secondProcess, secondConsole, secondStderr)
@@ -541,7 +576,7 @@ class QemuAndroidRuntimeInstrumentationTest {
             "test \"$(id -un)\" = pocketos && test \"$(id -u)\" != 0 && " +
                 "test -f /var/lib/pocketos/user-setup-complete && $persistenceProbe && " +
                 "echo __POCKETOS_ACCOUNT_AND_DISK_OK__\n"
-        process.writeSerial(command.toByteArray(Charsets.UTF_8))
+        writeSerialBounded("account and persistence probe", process, command.toByteArray(Charsets.UTF_8), console, stderr)
         awaitStage("Checking non-root identity and persistent first-run marker", "__POCKETOS_ACCOUNT_AND_DISK_OK__", console, process, stderr, PROMPT_TIMEOUT_MS)
     }
 
@@ -552,7 +587,7 @@ class QemuAndroidRuntimeInstrumentationTest {
         stderr: BoundedDiagnosticCapture,
     ) {
         val marker = "__POCKETOS_GUEST_SYNC_COMPLETE__"
-        process.writeSerial("sync && echo $marker\n".toByteArray(Charsets.UTF_8))
+        writeSerialBounded("guest filesystem sync", process, "sync && echo $marker\n".toByteArray(Charsets.UTF_8), console, stderr)
         awaitStage("Waiting for guest filesystem sync", marker, console, process, stderr, PROMPT_TIMEOUT_MS)
     }
 
@@ -577,13 +612,74 @@ class QemuAndroidRuntimeInstrumentationTest {
         activeJournal?.record("host-disk-sync", "fsync=complete ext4=valid bytes=${disk.length()}")
     }
 
+    /**
+     * Android's Process output pipe can block if QEMU stops consuming serial stdin.
+     * Keep test control writes off the instrumentation thread and terminate QEMU if
+     * a write does not complete; otherwise a blocked write bypasses every stage timeout.
+     */
+    private fun writeSerialBounded(
+        stage: String,
+        process: NativeProcessHandle,
+        bytes: ByteArray,
+        console: SerialCapture,
+        stderr: BoundedDiagnosticCapture,
+        timeoutMs: Long = SERIAL_WRITE_TIMEOUT_MS,
+    ) {
+        activeJournal?.record("serial-write-start", "stage=$stage bytes=${bytes.size}")
+        Log.i(TAG, "serial write start stage=$stage bytes=${bytes.size}")
+        val write = FutureTask<Unit> { process.writeSerial(bytes) }
+        Thread(write, "pocketos-serial-write").apply {
+            isDaemon = true
+            start()
+        }
+        try {
+            write.get(timeoutMs, TimeUnit.MILLISECONDS)
+            activeJournal?.record("serial-write-complete", "stage=$stage bytes=${bytes.size}")
+            Log.i(TAG, "serial write complete stage=$stage bytes=${bytes.size}")
+        } catch (failure: Exception) {
+            write.cancel(true)
+            val wasInterrupted = failure is InterruptedException
+            if (wasInterrupted) Thread.interrupted()
+            val snapshot = diagnosticSummary(process, console, stderr)
+            process.expectOutputClosure()
+            val stopped = runCatching {
+                process.forceStop(WATCHDOG_KILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            }.getOrDefault(false)
+            val pumpsStopped = runCatching {
+                process.awaitOutputPumps(OUTPUT_PUMP_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            }.getOrDefault(false)
+            val cause = if (failure is TimeoutException) {
+                "serial write exceeded ${timeoutMs}ms"
+            } else {
+                "serial write failed (${failure.javaClass.simpleName})"
+            }
+            val details = "$cause stage=$stage forcedStop=$stopped outputPumpsStopped=$pumpsStopped $snapshot"
+            activeJournal?.record("serial-write-failure", details)
+            Log.e(TAG, details)
+            if (wasInterrupted) Thread.currentThread().interrupt()
+            throw AssertionError(details, failure)
+        }
+    }
+
     private fun gracefulGuestPoweroff(
         process: NativeProcessHandle,
         console: SerialCapture,
         stderr: BoundedDiagnosticCapture,
     ) {
         reportStage("Requesting clean Alpine guest poweroff")
-        process.writeSerial("pocketos-shutdown\n".toByteArray(Charsets.UTF_8))
+        writeSerialBounded("guest shutdown request", process, "pocketos-shutdown\n".toByteArray(Charsets.UTF_8), console, stderr)
+        awaitStage("Waiting for shutdown command acknowledgement", "POCKETOS_SHUTDOWN_REQUESTED", console, process, stderr, SHUTDOWN_MARKER_TIMEOUT_MS)
+        awaitStage("Waiting for root shutdown watcher acknowledgement", "POCKETOS_SHUTDOWN_WATCHER_ACCEPTED", console, process, stderr, SHUTDOWN_MARKER_TIMEOUT_MS)
+        awaitStage("Waiting for guest disk sync confirmation", "POCKETOS_GUEST_SYNC_COMPLETE", console, process, stderr, GUEST_SYNC_TIMEOUT_MS)
+        awaitStage(
+            "Waiting for BusyBox init shutdown action completion",
+            "POCKETOS_INIT_SHUTDOWN_ACTION_COMPLETE",
+            console,
+            process,
+            stderr,
+            GUEST_POWEROFF_TIMEOUT_SECONDS * 1_000,
+        )
+        reportStage("Waiting for QEMU exit after guest shutdown")
         if (!process.awaitExit(GUEST_POWEROFF_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             val snapshot = diagnosticSummary(process, console, stderr)
             activeJournal?.record("guest-poweroff-timeout", snapshot)
@@ -947,6 +1043,9 @@ class QemuAndroidRuntimeInstrumentationTest {
         private const val QMP_TIMEOUT_MS = 5_000
         private const val QMP_EXIT_TIMEOUT_MS = 15L
         private const val GUEST_POWEROFF_TIMEOUT_SECONDS = 20L
+        private const val SERIAL_WRITE_TIMEOUT_MS = 3_000L
+        private const val SHUTDOWN_MARKER_TIMEOUT_MS = 5_000L
+        private const val GUEST_SYNC_TIMEOUT_MS = 15_000L
         private const val MIN_TEST_STORAGE_BYTES = 600L * 1024L * 1024L
         private const val EXT4_MAGIC_OFFSET = 1080L
         private const val MAX_DIAGNOSTIC_CHARS = 4_096

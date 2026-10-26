@@ -7,3 +7,4 @@ if [ "$(id -un)" != pocketos ]; then
   exit 1
 fi
 printf shutdown > /run/pocketos-shutdown-request
+printf '%s\n' POCKETOS_SHUTDOWN_REQUESTED

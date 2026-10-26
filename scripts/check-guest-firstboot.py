@@ -256,9 +256,17 @@ def main() -> int:
         )
         stage = "first-login persistence write and sync"
         wait_for(process, master_fd, buffer, b"__POCKETOS_FIRST_LOGIN_SYNCED__", args.timeout)
-        stage = "clean guest poweroff"
+        stage = "shutdown command acknowledgement"
         os.write(master_fd, b"pocketos-shutdown\n")
-        shutdown_deadline = time.monotonic() + min(args.timeout, 30)
+        wait_for(process, master_fd, buffer, b"POCKETOS_SHUTDOWN_REQUESTED", min(args.timeout, 5))
+        stage = "root shutdown watcher acknowledgement"
+        wait_for(process, master_fd, buffer, b"POCKETOS_SHUTDOWN_WATCHER_ACCEPTED", min(args.timeout, 5))
+        stage = "guest filesystem sync during shutdown"
+        wait_for(process, master_fd, buffer, b"POCKETOS_GUEST_SYNC_COMPLETE", min(args.timeout, 15))
+        stage = "BusyBox init shutdown action completion"
+        wait_for(process, master_fd, buffer, b"POCKETOS_INIT_SHUTDOWN_ACTION_COMPLETE", min(args.timeout, 15))
+        stage = "clean guest poweroff"
+        shutdown_deadline = time.monotonic() + min(args.timeout, 20)
         while process.poll() is None and time.monotonic() < shutdown_deadline:
             time.sleep(0.1)
         if process.poll() is None:

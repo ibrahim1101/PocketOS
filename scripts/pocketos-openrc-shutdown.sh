@@ -37,3 +37,4 @@ fi
 
 # BusyBox init will then stop remaining processes and sync again before halt.
 sync
+echo "POCKETOS_INIT_SHUTDOWN_ACTION_COMPLETE" >/dev/console
