@@ -125,3 +125,5 @@ The production coordinator also retained readiness across launches because it re
 Serial and diagnostic receivers are now tagged with a per-launch identity as well. A late callback from an old output pump is rejected before it can update the replacement guest's readiness. The restart regression retains the previous serial receiver, sends an old login prompt after the new kernel output, and requires the replacement to remain BOOTING until its own receiver observes a prompt.
 
 Boot watchdog and session-deadline callbacks now capture the process they supervise, too. A cancellation race can dispatch an old callback after a replacement starts; the process identity guard rejects that callback. The restart regression deliberately executes the old deadline callback after the replacement reaches RUNNING and verifies it remains alive.
+
+The minimal host-QEMU CI dependency set explicitly includes ipxe-qemu: the virtio PCI networking test requires efi-virtio.rom even with a directly supplied kernel. Omitting recommendations without that explicit package caused CI to exit before guest startup; no device-runtime success is inferred from that packaging failure.
