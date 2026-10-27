@@ -139,7 +139,8 @@ class ServerService : Service() {
 
     private fun prepareGuest(): PreparedGuest {
         val assets = GuestAssetInstaller.forContext(this).install()
-        val qmpSocket = File(filesDir, "pocketos-qmp.sock")
+        // A delayed old shutdown must never connect to a replacement VM's socket.
+        val qmpSocket = File(filesDir, "qmp-${java.util.UUID.randomUUID().toString().replace("-", "")}.sock")
         qmpSocket.delete()
         val executable = File(applicationInfo.nativeLibraryDir, "libqemu-system-aarch64.so")
         check(executable.isFile && executable.canExecute()) { "Packaged ARM64 QEMU executable is unavailable" }
@@ -162,7 +163,9 @@ class ServerService : Service() {
         return PreparedGuest(
             command = command,
             workingDirectory = filesDir,
-            diskLease = lease,
+            diskLease = AutoCloseable {
+                try { lease.close() } finally { qmpSocket.delete() }
+            },
             requestGracefulShutdown = { QmpClient().requestQuit(qmpSocket.absolutePath) },
         )
     }
@@ -222,3 +225,4 @@ class ServerService : Service() {
 
     }
 }
+

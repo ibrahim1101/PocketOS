@@ -2,6 +2,7 @@ package com.pocketos.app
 
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.FutureTask
 
 interface GuestProcess {
     val isAlive: Boolean
@@ -41,6 +42,7 @@ enum class GuestStopReason {
     BOOT_TIMEOUT,
     TIME_LIMIT,
     UNEXPECTED_EXIT,
+    TERMINAL_IO_FAILURE,
     START_FAILURE,
 }
 
@@ -60,6 +62,7 @@ class GuestSessionController(
     private val onDiagnosticOutput: (ByteArray) -> Unit = {},
     private val onStateChanged: (VmState) -> Unit = {},
     private val onSerialOutput: (ByteArray) -> Unit = {},
+    private val serialWriteTimeoutMs: Long = DEFAULT_SERIAL_WRITE_TIMEOUT_MS,
 ) {
     private val lock = Any()
     private var process: GuestProcess? = null
@@ -80,6 +83,7 @@ class GuestSessionController(
         require(gracefulShutdownTimeoutMs > 0)
         require(forceStopTimeoutMs > 0)
         require(bootTimeoutMs > 0)
+        require(serialWriteTimeoutMs > 0)
     }
 
     /** Prepare the disk and command, then launch once. A low battery rejects before preparation. */
@@ -129,10 +133,30 @@ class GuestSessionController(
     }
 
     /** Sends terminal input only after the guest has reached a real ready prompt. */
-    fun writeSerial(bytes: ByteArray): Boolean = synchronized(lock) {
-        val current = process ?: return false
-        if (lifecycle.state != VmState.RUNNING || !current.isAlive) return false
-        runCatching { current.writeSerial(bytes) }.isSuccess
+    fun writeSerial(bytes: ByteArray): Boolean {
+        val current = synchronized(lock) {
+            process?.takeIf { lifecycle.state == VmState.RUNNING && it.isAlive }
+        } ?: return false
+        val input = bytes.copyOf()
+        val write = FutureTask {
+            val allowed = synchronized(lock) { process === current && lifecycle.state == VmState.RUNNING }
+            if (!allowed) false else {
+                current.writeSerial(input)
+                true
+            }
+        }
+        Thread(write, "pocketos-terminal-write").apply { isDaemon = true; start() }
+        return try {
+            write.get(serialWriteTimeoutMs, TimeUnit.MILLISECONDS)
+        } catch (failure: Exception) {
+            write.cancel(true)
+            // Keep the Android service worker available for battery/user/deadline events.
+            // The identity check prevents a late failure from stopping a replacement guest.
+            Thread({ stop(GuestStopReason.TERMINAL_IO_FAILURE, expectedProcess = current) }, "pocketos-terminal-failure")
+                .apply { isDaemon = true; start() }
+            if (failure is InterruptedException) Thread.currentThread().interrupt()
+            false
+        }
     }
 
     /** Called from the event-driven Android battery receiver; Wi-Fi changes are intentionally ignored. */
@@ -147,10 +171,11 @@ class GuestSessionController(
 
     fun stopByUser(): Boolean = stop(GuestStopReason.USER_REQUEST)
 
-    private fun stop(reason: GuestStopReason, onlyWhileBooting: Boolean = false): Boolean {
+    private fun stop(reason: GuestStopReason, onlyWhileBooting: Boolean = false, expectedProcess: GuestProcess? = null): Boolean {
         val currentProcess: GuestProcess?
         val guest: PreparedGuest?
         synchronized(lock) {
+            if (expectedProcess != null && process !== expectedProcess) return false
             if (onlyWhileBooting && lifecycle.state != VmState.BOOTING) return false
             when (lifecycle.state) {
                 VmState.RUNNING -> {
@@ -184,10 +209,18 @@ class GuestSessionController(
 
         val processToStop = currentProcess ?: return true
         processToStop.expectOutputClosure()
+        val request = FutureTask { guest?.requestGracefulShutdown?.invoke() }
+        Thread(request, "pocketos-graceful-request").apply { isDaemon = true; start() }
+        var requestInterrupted = false
         try {
-            guest?.requestGracefulShutdown?.invoke()
-        } catch (_: Exception) {
-            // Bounded wait and force-stop below are the recovery path.
+            request.get(gracefulShutdownTimeoutMs, TimeUnit.MILLISECONDS)
+        } catch (failure: Exception) {
+            request.cancel(true)
+            // Even a stuck shutdown callback cannot prevent process termination.
+            if (failure is InterruptedException) {
+                requestInterrupted = true
+                Thread.interrupted()
+            }
         }
 
         val stoppedGracefully = runCatching {
@@ -197,6 +230,7 @@ class GuestSessionController(
             runCatching { processToStop.forceStop(forceStopTimeoutMs, TimeUnit.MILLISECONDS) }
         }
         if (!processToStop.isAlive) finishProcess(processToStop)
+        if (requestInterrupted) Thread.currentThread().interrupt()
         return true
     }
 
@@ -301,5 +335,7 @@ class GuestSessionController(
         const val DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000L
         const val DEFAULT_FORCE_STOP_TIMEOUT_MS = 5_000L
         const val DEFAULT_BOOT_TIMEOUT_MS = 180_000L
+        const val DEFAULT_SERIAL_WRITE_TIMEOUT_MS = 3_000L
     }
 }
+

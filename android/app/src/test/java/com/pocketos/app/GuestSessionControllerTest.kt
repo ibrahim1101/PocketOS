@@ -2,6 +2,7 @@ package com.pocketos.app
 
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.CountDownLatch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -9,6 +10,60 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GuestSessionControllerTest {
+    @Test(timeout = 5000)
+    fun blockedTerminalWriteDoesNotHoldLifecycleLockAgainstBatteryCutoff() {
+        val rig = Rig(serialWriteTimeoutMs = 2000)
+        assertTrue(rig.controller.start { rig.preparedGuest() })
+        rig.launcher.emitSerial("pocketos login: ")
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        rig.launcher.process!!.writeAction = { entered.countDown(); release.await(3, TimeUnit.SECONDS) }
+        val writer = Thread { rig.controller.writeSerial("test\n".toByteArray()) }.apply { isDaemon = true; start() }
+        try {
+            assertTrue(entered.await(1, TimeUnit.SECONDS))
+            val started = System.nanoTime()
+            assertTrue(rig.controller.onBatteryChanged(20))
+            assertTrue("Battery cutoff waited behind terminal I/O", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 1000)
+            assertEquals(GuestStopReason.BATTERY_CUTOFF, rig.controller.lastStopReason)
+            assertTrue(rig.lease.closed)
+            assertFalse(rig.launcher.process!!.isAlive)
+        } finally {
+            release.countDown()
+            writer.join(1000)
+        }
+    }
+
+    @Test(timeout = 5000)
+    fun terminalWriteDeadlineStopsGuestWithoutWaitingForPipeToDrain() {
+        val rig = Rig(serialWriteTimeoutMs = 50)
+        assertTrue(rig.controller.start { rig.preparedGuest() })
+        rig.launcher.emitSerial("pocketos login: ")
+        val release = CountDownLatch(1)
+        rig.launcher.process!!.writeAction = { release.await(3, TimeUnit.SECONDS) }
+        try {
+            assertFalse(rig.controller.writeSerial("test\n".toByteArray()))
+            awaitState(rig.controller, VmState.STOPPED)
+            assertEquals(GuestStopReason.TERMINAL_IO_FAILURE, rig.controller.lastStopReason)
+            assertTrue(rig.lease.closed)
+        } finally { release.countDown() }
+    }
+
+    @Test(timeout = 5000)
+    fun hungGracefulRequestCannotPreventForceStopAndDiskRelease() {
+        val rig = Rig(gracefulShutdownCompletes = false)
+        val release = CountDownLatch(1)
+        assertTrue(rig.controller.start { rig.preparedGuest().copy(requestGracefulShutdown = { release.await(3, TimeUnit.SECONDS) }) })
+        rig.launcher.emitSerial("pocketos login: ")
+        try {
+            val started = System.nanoTime()
+            assertTrue(rig.controller.stopByUser())
+            assertTrue("Stuck callback prevented bounded shutdown", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 1500)
+            assertEquals(1, rig.launcher.process!!.forceStopCount)
+            assertEquals(VmState.STOPPED, rig.controller.state)
+            assertTrue(rig.lease.closed)
+        } finally { release.countDown() }
+    }
+
     @Test
     fun rejectsLowBatteryBeforePreparingOrLaunching() {
         val rig = Rig(initialBattery = 20)
@@ -151,6 +206,7 @@ class GuestSessionControllerTest {
         initialBattery: Int = 80,
         private val gracefulShutdownCompletes: Boolean = true,
         bootTimeoutMs: Long = GuestSessionController.DEFAULT_BOOT_TIMEOUT_MS,
+        serialWriteTimeoutMs: Long = GuestSessionController.DEFAULT_SERIAL_WRITE_TIMEOUT_MS,
     ) {
         val lifecycle = VmLifecycle()
         val store = FakeStore()
@@ -167,9 +223,10 @@ class GuestSessionControllerTest {
             processLauncher = launcher,
             scheduler = scheduler,
             batteryPercent = { battery },
-            gracefulShutdownTimeoutMs = 1,
+            gracefulShutdownTimeoutMs = 100,
             forceStopTimeoutMs = 1,
             bootTimeoutMs = bootTimeoutMs,
+            serialWriteTimeoutMs = serialWriteTimeoutMs,
         )
 
         fun preparedGuest() = PreparedGuest(
@@ -211,8 +268,11 @@ class GuestSessionControllerTest {
         override val isAlive: Boolean get() = running
 
         override fun writeSerial(bytes: ByteArray) {
+            writeAction()
             check(running)
         }
+
+        var writeAction: () -> Unit = {}
 
         var expectOutputClosureCount = 0
         override fun expectOutputClosure() {
@@ -271,3 +331,4 @@ class GuestSessionControllerTest {
         override fun nowMs() = now
     }
 }
+
