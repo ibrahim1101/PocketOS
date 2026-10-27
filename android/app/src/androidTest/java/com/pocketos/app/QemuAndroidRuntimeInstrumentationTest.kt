@@ -379,6 +379,8 @@ class QemuAndroidRuntimeInstrumentationTest {
                 failure!!.message.orEmpty().contains("serial write exceeded 250ms"),
             )
             assertFalse("Child survived bounded serial-write cleanup", process.isAlive)
+            assertFalse("Blocked serial writer prevented process diagnostics", failure.message.orEmpty().contains("snapshot-timeout"))
+            assertTrue("Blocked serial writer lost procfs diagnostics", failure.message.orEmpty().contains("qemuProcfs="))
             assertTrue("Output pumps survived bounded serial-write cleanup", process.awaitOutputPumps(3, TimeUnit.SECONDS))
         } finally {
             if (process.isAlive) process.forceStop(2, TimeUnit.SECONDS)

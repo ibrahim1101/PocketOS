@@ -10,6 +10,7 @@ $Repo = "ibrahim1101/PocketOS"
 $Commit = ""
 $Failed = [System.Collections.Generic.List[string]]::new()
 $Results = [System.Collections.Generic.List[object]]::new()
+$TestMayBeRunning = $false
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $ArtifactDirectory = Join-Path $OutputDirectory "artifacts"
 New-Item -ItemType Directory -Force -Path $ArtifactDirectory | Out-Null
@@ -36,7 +37,7 @@ function ConvertTo-CommandLineArgument([string]$Value) {
   return $builder.ToString()
 }
 
-function Invoke-Bounded([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds) {
+function Invoke-Bounded([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds, [scriptblock]$OnHeartbeat = $null) {
   $info = [System.Diagnostics.ProcessStartInfo]::new()
   $info.FileName = $File
   $info.Arguments = (($Arguments | ForEach-Object { ConvertTo-CommandLineArgument $_ }) -join ' ')
@@ -49,12 +50,25 @@ function Invoke-Bounded([string]$File, [string[]]$Arguments, [int]$TimeoutSecond
   if (-not $process.Start()) { throw "Could not start $File" }
   $stdoutTask = $process.StandardOutput.ReadToEndAsync()
   $stderrTask = $process.StandardError.ReadToEndAsync()
-  $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+  $clock = [System.Diagnostics.Stopwatch]::StartNew()
+  $nextHeartbeatMs = 10000L
+  while (-not $process.HasExited -and $clock.ElapsedMilliseconds -lt ($TimeoutSeconds * 1000L)) {
+    $remainingMs = ($TimeoutSeconds * 1000L) - $clock.ElapsedMilliseconds
+    if ($process.WaitForExit([int][Math]::Max(0L, [Math]::Min(1000L, $remainingMs)))) { break }
+    if ($OnHeartbeat -and $clock.ElapsedMilliseconds -ge $nextHeartbeatMs) {
+      try { & $OnHeartbeat } catch { Write-Warning 'Host heartbeat collection failed; supervision continues' }
+      $nextHeartbeatMs = $clock.ElapsedMilliseconds + 10000L
+    }
+  }
+  $timedOut = -not $process.HasExited
   if ($timedOut) {
     try { $process.Kill() } catch { }
     [void]$process.WaitForExit(5000)
   }
   if (-not $process.HasExited) { throw "$File could not be stopped after its timeout" }
+  if (-not $stdoutTask.Wait(5000) -or -not $stderrTask.Wait(5000)) {
+    throw "$File output pipes did not close after bounded process termination"
+  }
   $stdout = $stdoutTask.GetAwaiter().GetResult()
   $stderr = $stderrTask.GetAwaiter().GetResult()
   [pscustomobject]@{
@@ -64,8 +78,8 @@ function Invoke-Bounded([string]$File, [string[]]$Arguments, [int]$TimeoutSecond
   }
 }
 
-function Invoke-Adb([string[]]$Arguments, [int]$TimeoutSeconds = 90) {
-  return Invoke-Bounded $script:Adb $Arguments $TimeoutSeconds
+function Invoke-Adb([string[]]$Arguments, [int]$TimeoutSeconds = 90, [scriptblock]$OnHeartbeat = $null) {
+  return Invoke-Bounded $script:Adb $Arguments $TimeoutSeconds $OnHeartbeat
 }
 
 function Stop-DeviceTestProcesses([string]$DeviceSerial) {
@@ -175,19 +189,33 @@ try {
     @{ Name = "alpine-guest-workflow"; Class = "bootsFreshAlpineSetsPasswordLogsInPersistsAndPowersOffGuest"; Timeout = 300 }
   )
   foreach ($test in $tests) {
-    $output = Invoke-Adb @("-s", $Serial, "shell", "am", "instrument", "-w", "-r", "-e", "class", "com.pocketos.app.QemuAndroidRuntimeInstrumentationTest#$($test.Class)", "com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner") $test.Timeout
+    $hostProgress = [System.Text.StringBuilder]::new()
+    $hostHeartbeat = {
+      # This ADB request runs independently of the app's Java timers. run-as scopes
+      # procfs access to the target app; no global freezer or battery setting changes.
+      $probe = Invoke-Adb @("-s", $Serial, "shell", "run-as", "com.pocketos.app", "sh", "-c",
+        'for p in $(pidof com.pocketos.app libqemu-system-aarch64.so 2>/dev/null); do echo PROCESS=$p; cat /proc/$p/stat /proc/$p/cgroup 2>/dev/null; done') 3
+      [void]$hostProgress.AppendLine("utc=$([DateTime]::UtcNow.ToString('o')) exit=$($probe.ExitCode) timeout=$($probe.TimedOut)")
+      [void]$hostProgress.AppendLine($probe.Output)
+      if ($hostProgress.Length -gt 65536) { [void]$hostProgress.Remove(0, $hostProgress.Length - 65536) }
+      Save-Text "android-host-progress.txt" $hostProgress.ToString() | Out-Null
+    }
+    $TestMayBeRunning = $true
+    $output = Invoke-Adb @("-s", $Serial, "shell", "am", "instrument", "-w", "-r", "-e", "class", "com.pocketos.app.QemuAndroidRuntimeInstrumentationTest#$($test.Class)", "com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner") $test.Timeout $hostHeartbeat
     Save-Text "$($test.Name).txt" $output.Output | Out-Null
     $passed = -not $output.TimedOut -and $output.ExitCode -eq 0 -and $output.Output -match 'OK \(1 test\)'
     $Results.Add([pscustomobject]@{ Test = $test.Name; Result = if ($passed) { "PASS" } else { "FAIL" }; ExitCode = $output.ExitCode; TimedOut = $output.TimedOut })
     if (-not $passed) {
       $Failed.Add($test.Name)
       # Capture Android scheduling/freezer state before force-stop destroys it.
-      $activityState = Invoke-Adb @("-s", $Serial, "shell", "dumpsys", "activity", "processes") 3
+      $activityState = Invoke-Adb @("-s", $Serial, "shell", "dumpsys", "activity", "processes", "com.pocketos.app") 3
       Save-Text "android-process-scheduling.txt" $activityState.Output | Out-Null
       $powerState = Invoke-Adb @("-s", $Serial, "shell", "dumpsys", "power") 3
-      Save-Text "android-power-state.txt" $powerState.Output | Out-Null
+      $powerSummary = ($powerState.Output -split '\r?\n' | Where-Object { $_ -match 'mWakefulness=|mIsPowered=|mDisplayReady=|mWakeLockSummary=|mUserActivitySummary=|PocketOS' }) -join [Environment]::NewLine
+      Save-Text "android-power-state.txt" $powerSummary | Out-Null
       Save-Text "timeout-cleanup-$($test.Name).txt" (Stop-DeviceTestProcesses $Serial) | Out-Null
     }
+    $TestMayBeRunning = $false
   }
 
   $logcat = Invoke-Adb @("-s", $Serial, "logcat", "-d", "-v", "threadtime") 60
@@ -210,6 +238,9 @@ try {
     }
   }
 } catch {
+  if ($TestMayBeRunning) {
+    try { Save-Text "exception-cleanup.txt" (Stop-DeviceTestProcesses $Serial) | Out-Null } catch { }
+  }
   $Failed.Add("handoff/setup: $($_.Exception.Message)")
   Save-Text "script-error.txt" $_.Exception.Message | Out-Null
 } finally {

@@ -242,7 +242,9 @@ jobs:
           }
       - name: Test diagnostic sanitization
         shell: pwsh
-        run: ./scripts/test-vivo-sanitizer.ps1
+        run: |
+          ./scripts/test-vivo-sanitizer.ps1
+          ./scripts/test-vivo-supervision.ps1
       - name: Fetch and verify pinned Android QEMU source
         run: |
           bash scripts/fetch-android-qemu-source.sh "$RUNNER_TEMP/qemu-11.1.2"
@@ -308,3 +310,4 @@ jobs:
           --initramfs "$RUNNER_TEMP/initramfs-virt"
           --rootfs "$RUNNER_TEMP/alpine-aarch64.ext4"
           --timeout 240
+

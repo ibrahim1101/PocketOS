@@ -3,6 +3,7 @@ package com.pocketos.app
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -134,7 +135,7 @@ class NativeProcessHandle internal constructor(
     private val outputPumps: CountDownLatch,
     private val executable: String,
 ) : GuestProcess {
-    private val previousThreadCpuTicks = mutableMapOf<String, Long>()
+    private val previousThreadCpuTicks = ConcurrentHashMap<String, Long>()
 
     /** Android's java.lang.Process stub has no pid() API; resolve our direct child from procfs. */
     val pid: Long
@@ -203,7 +204,6 @@ class NativeProcessHandle internal constructor(
     }.getOrDefault("unavailable")
 
     /** Best-effort, bounded snapshot of the exact child PID and its procfs threads. */
-    @Synchronized
     fun diagnosticSnapshot(): String = runCatching {
         val pid = findChildPid()
         if (pid == null) {
@@ -265,3 +265,4 @@ class NativeProcessHandle internal constructor(
         const val MAX_DIAGNOSTIC_THREADS = 64
     }
 }
+
