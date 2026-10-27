@@ -152,7 +152,10 @@ class GuestSessionController(
             write.cancel(true)
             // Keep the Android service worker available for battery/user/deadline events.
             // The identity check prevents a late failure from stopping a replacement guest.
-            Thread({ stop(GuestStopReason.TERMINAL_IO_FAILURE, expectedProcess = current) }, "pocketos-terminal-failure")
+            Thread({
+                val stopped = stop(GuestStopReason.TERMINAL_IO_FAILURE, expectedProcess = current)
+                runCatching { onDiagnosticOutput("Terminal I/O failed; matching guest stopped=$stopped.\n".toByteArray()) }
+            }, "pocketos-terminal-failure")
                 .apply { isDaemon = true; start() }
             if (failure is InterruptedException) Thread.currentThread().interrupt()
             false

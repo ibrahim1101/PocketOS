@@ -11,6 +11,35 @@ import org.junit.Test
 
 class GuestSessionControllerTest {
     @Test(timeout = 5000)
+    fun lateTerminalFailureCannotStopReplacementGuest() {
+        val failureHandled = CountDownLatch(1)
+        val rig = Rig(serialWriteTimeoutMs = 2000, diagnostic = { failureHandled.countDown() })
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        assertTrue(rig.controller.start { rig.preparedGuest() })
+        rig.launcher.emitSerial("pocketos login: ")
+        rig.launcher.process!!.writeAction = { entered.countDown(); release.await(3, TimeUnit.SECONDS) }
+        val writer = Thread { rig.controller.writeSerial("old-input\n".toByteArray()) }.apply { isDaemon = true; start() }
+        try {
+            assertTrue(entered.await(1, TimeUnit.SECONDS))
+            assertTrue(rig.controller.stopByUser())
+            assertTrue(rig.controller.start { rig.preparedGuest().copy(diskLease = FakeLease()) })
+            rig.launcher.emitSerial("pocketos login: ")
+            val replacement = rig.launcher.process!!
+            release.countDown()
+            writer.join(1000)
+            assertTrue("Late failure cleanup never completed", failureHandled.await(1, TimeUnit.SECONDS))
+            assertEquals(VmState.RUNNING, rig.controller.state)
+            assertTrue(replacement.isAlive)
+            assertNull(rig.controller.lastStopReason)
+        } finally {
+            release.countDown()
+            rig.controller.stopByUser()
+            writer.join(1000)
+        }
+    }
+
+    @Test(timeout = 5000)
     fun blockedTerminalWriteDoesNotHoldLifecycleLockAgainstBatteryCutoff() {
         val rig = Rig(serialWriteTimeoutMs = 2000)
         assertTrue(rig.controller.start { rig.preparedGuest() })
@@ -207,6 +236,7 @@ class GuestSessionControllerTest {
         private val gracefulShutdownCompletes: Boolean = true,
         bootTimeoutMs: Long = GuestSessionController.DEFAULT_BOOT_TIMEOUT_MS,
         serialWriteTimeoutMs: Long = GuestSessionController.DEFAULT_SERIAL_WRITE_TIMEOUT_MS,
+        diagnostic: (ByteArray) -> Unit = {},
     ) {
         val lifecycle = VmLifecycle()
         val store = FakeStore()
@@ -227,6 +257,7 @@ class GuestSessionControllerTest {
             forceStopTimeoutMs = 1,
             bootTimeoutMs = bootTimeoutMs,
             serialWriteTimeoutMs = serialWriteTimeoutMs,
+            onDiagnosticOutput = diagnostic,
         )
 
         fun preparedGuest() = PreparedGuest(
