@@ -34,11 +34,12 @@ jobs:
           yes | "$sdkmanager_path" --licenses
           "$sdkmanager_path" "platforms;android-35" "build-tools;35.0.0" "platform-tools" "cmake;3.22.1" "ndk;27.2.12479018" "emulator" "system-images;android-35;google_apis;x86_64"
       - name: Install Android QEMU cross-build tools
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y autoconf automake bison e2fsprogs flex libtool ninja-build pkg-config qemu-system-arm
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 install -y --no-install-recommends autoconf automake bison e2fsprogs flex libtool ninja-build pkg-config qemu-system-arm
           python3 -m venv "$RUNNER_TEMP/qemu-build-venv"
-          "$RUNNER_TEMP/qemu-build-venv/bin/pip" install "meson==1.7.0"
+          "$RUNNER_TEMP/qemu-build-venv/bin/pip" install --timeout 30 --retries 2 "meson==1.7.0"
           echo "$RUNNER_TEMP/qemu-build-venv/bin" >> "$GITHUB_PATH"
       - name: Build packaged executable probe for Android ABIs
         run: |
