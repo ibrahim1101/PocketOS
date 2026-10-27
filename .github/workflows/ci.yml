@@ -209,6 +209,8 @@ jobs:
           path: |
             dist/build-info.txt
             dist/SHA256SUMS
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
             android/app/build/outputs/androidTest-results/connected/
             android/app/build/reports/androidTests/connected/
           if-no-files-found: ignore
