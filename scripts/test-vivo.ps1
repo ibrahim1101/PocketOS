@@ -181,6 +181,11 @@ try {
     $Results.Add([pscustomobject]@{ Test = $test.Name; Result = if ($passed) { "PASS" } else { "FAIL" }; ExitCode = $output.ExitCode; TimedOut = $output.TimedOut })
     if (-not $passed) {
       $Failed.Add($test.Name)
+      # Capture Android scheduling/freezer state before force-stop destroys it.
+      $activityState = Invoke-Adb @("-s", $Serial, "shell", "dumpsys", "activity", "processes") 3
+      Save-Text "android-process-scheduling.txt" $activityState.Output | Out-Null
+      $powerState = Invoke-Adb @("-s", $Serial, "shell", "dumpsys", "power") 3
+      Save-Text "android-power-state.txt" $powerState.Output | Out-Null
       Save-Text "timeout-cleanup-$($test.Name).txt" (Stop-DeviceTestProcesses $Serial) | Out-Null
     }
   }

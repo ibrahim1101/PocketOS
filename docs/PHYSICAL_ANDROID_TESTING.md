@@ -152,3 +152,5 @@ The CI Android x86_64 emulator runs the process-supervision, stream-cleanup, gue
 
 - Storage → Manage → Grow disk grows the raw image while stopped; ext4 expands on next boot.
 - Storage → Manage → Import ext4 backup confirms replacement, validates the selected image, stages it, then atomically replaces the disk while stopped. Export first if current data may be needed.
+
+For the current consolidated test, unlock the Vivo and keep the PocketOS validation activity visible. Instrumentation opens a debug-only validation screen and keeps its window awake until cleanup. A wake lock alone does not make a background process foreground. Do not switch apps or lock the phone during this bounded run. If it fails, scheduling and power snapshots are captured before host force-stop; these are sanitized along with the other diagnostics. No Android battery/security exemption is required.

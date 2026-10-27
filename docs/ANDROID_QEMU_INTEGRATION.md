@@ -103,3 +103,9 @@ The v12 result on commit `63be00b` again stopped at the clean-poweroff stage and
 
 
 The v13 handoff timeout is aligned with the instrumentation limits: five minutes at the Windows host, after a four-minute device-side watchdog, with a three-minute guest boot deadline. The host cleanup force-stops the instrumentation and app packages and checks for a surviving QEMU child. This is a bounded test candidate; only the next Vivo run can confirm clean shutdown and persistent reboot.
+
+### Vivo v12 on 4d20c03: whole-process progress stops
+
+The newly supplied vivo-test-v12.zip verifies commit 4d20c03 and fails before the first password prompt. Its current journal is f53e13b03d3c407db5c40df269c52eaf: serial bytes grow to 11846, then all heartbeats cease after ten seconds. Neither the 180-second prompt deadline nor the 240-second watchdog reports. The older journals in that ZIP belong to earlier runs. This evidence does not confirm a serial-write or guest shutdown failure in this run. Whole-process suspension is a hypothesis; the filtered logs do not prove Android freezer activity.
+
+Instrumentation previously ran QEMU in its own target process without a visible activity or foreground-service owner. A partial CPU wake lock does not establish a visible Android process lifecycle. Runtime tests now hold a dedicated, non-exported, debug-only activity resumed for the test lifetime, with KEEP_SCREEN_ON scoped to its window. It does not start the production VM, change the runtime validation gate, request battery exemptions, unlock the device, or disable Android's freezer. A regression checks that the target activity is resumed. The host captures Android process scheduling and power state before timeout cleanup. Keep the phone unlocked and the validation activity visible during the consolidated test. Physical success remains unverified.

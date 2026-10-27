@@ -1,6 +1,7 @@
 package com.pocketos.app
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -11,6 +12,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import org.junit.Rule
+import org.junit.rules.ExternalResource
 import org.junit.runner.RunWith
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -33,6 +36,33 @@ import java.util.zip.GZIPInputStream
 
 @RunWith(AndroidJUnit4::class)
 class QemuAndroidRuntimeInstrumentationTest {
+    // A wake lock keeps the CPU awake; it does not make a cached Android app
+    // foreground. Keep this test's process visible for its entire lifetime.
+    @get:Rule
+    val foregroundActivity = object : ExternalResource() {
+        private var activity: RuntimeValidationActivity? = null
+
+        override fun before() {
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            activity = instrumentation.startActivitySync(
+                Intent(instrumentation.targetContext, RuntimeValidationActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            ) as RuntimeValidationActivity
+            instrumentation.waitForIdleSync()
+            assertTrue("Runtime validation activity did not resume; unlock the device", RuntimeValidationActivity.resumed)
+        }
+
+        override fun after() {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync { activity?.finish() }
+            activity = null
+        }
+    }
+
+    @Test
+    fun validationRunsWithVisibleTargetActivity() {
+        assertTrue("Target process has no resumed validation activity", RuntimeValidationActivity.resumed)
+    }
+
     @Test
     fun cpuExecutionLeaseKeepsCpuAwakeUntilClosed() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
