@@ -2,6 +2,8 @@
 
 This handoff is for testing PocketOS on an unrooted ARM64 Android device. The APKs and instrumentation APK are built together in one GitHub Actions job from one commit. The workflow uploads build hashes and Android emulator test results. The Android NDK and local QEMU compilation are not required.
 
+CI additionally installs the same signed delivery APK pair on an Android 16/API 36 x86_64 emulator and runs the instrumentation regressions there. Require the entire workflow to pass, including this dependent job. Its `pocketos-android16-results-<commit>` artifact contains the instrumentation transcript and emulator diagnostics. The three ARM64-only checks remain skipped on x86_64; this job does not certify Vivo guest boot or persistence.
+
 ## Download the APK artifacts
 
 Prerequisites on Windows 11: GitHub CLI gh authenticated for the public PocketOS repository, Android platform-tools adb, and USB debugging enabled on the Vivo I2501. Replace the run ID and commit SHA with the values from a successful CI run.

@@ -32,7 +32,9 @@ else
   fi
   # Do not wait on a killed task here: even an uninterruptible OpenRC process
   # must not keep PID 1 from advancing to its own process teardown.
-  [ "$timed_out" -eq 0 ] && wait "$openrc_pid" 2>/dev/null || true
+  if [ "$timed_out" -eq 0 ]; then
+    wait "$openrc_pid" 2>/dev/null || true
+  fi
 fi
 
 # BusyBox init will then stop remaining processes and sync again before halt.

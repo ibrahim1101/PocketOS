@@ -32,7 +32,7 @@ jobs:
         run: |
           sdkmanager_path="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager_path" --licenses
-          "$sdkmanager_path" "platforms;android-35" "build-tools;35.0.0" "platform-tools" "cmake;3.22.1" "ndk;27.2.12479018" "emulator" "system-images;android-35;google_apis;x86_64"
+          "$sdkmanager_path" "platforms;android-35" "build-tools;34.0.0" "build-tools;35.0.0" "platform-tools" "cmake;3.22.1" "ndk;27.2.12479018" "emulator" "system-images;android-35;google_apis;x86_64"
       - name: Install Android QEMU cross-build tools
         timeout-minutes: 10
         run: |
@@ -214,6 +214,81 @@ jobs:
             android/app/build/outputs/androidTest-results/connected/
             android/app/build/reports/androidTests/connected/
           if-no-files-found: ignore
+          retention-days: 14
+
+  android-16:
+    name: Android 16 delivery APK regression tests
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      # Test the delivery APKs themselves; do not compile a separate candidate.
+      - uses: actions/download-artifact@v4
+        with:
+          name: pocketos-android-apk-${{ github.event.pull_request.head.sha || github.sha }}${{ github.event_name == 'pull_request' && '-pull-request' || '' }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: pocketos-instrumentation-apk-${{ github.event.pull_request.head.sha || github.sha }}${{ github.event_name == 'pull_request' && '-pull-request' || '' }}
+          path: dist
+      - name: Install Android 16 emulator image
+        timeout-minutes: 8
+        run: |
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          yes | "$sdk_root/cmdline-tools/latest/bin/sdkmanager" --licenses
+          "$sdk_root/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "emulator" "system-images;android-36;google_apis;x86_64"
+      - name: Boot Android 16 and test the signed delivery APK pair
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$sdk_root/platform-tools:$sdk_root/emulator:$PATH"
+          sudo chmod 666 /dev/kvm
+          echo "no" | "$sdk_root/cmdline-tools/latest/bin/avdmanager" create avd -n pocketos-api36 -k "system-images;android-36;google_apis;x86_64" --device pixel_2 --force
+          "$sdk_root/emulator/emulator" -avd pocketos-api36 -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -accel on > emulator-api36.log 2>&1 &
+          emulator_pid=$!
+          trap 'timeout 10s adb logcat -d -s PocketOSRuntimeTest:I AndroidRuntime:E > logcat-api36.txt 2>&1 || true; timeout 5s adb shell am force-stop com.pocketos.app >/dev/null 2>&1 || true; kill "$emulator_pid" 2>/dev/null || true' EXIT
+          timeout 120s adb wait-for-device
+          booted=false
+          for attempt in $(seq 1 120); do
+            if [[ "$(timeout 5s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              booted=true
+              break
+            fi
+            sleep 2
+          done
+          test "$booted" = true
+          test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 36
+          adb shell input keyevent KEYCODE_WAKEUP
+          adb install -r dist/PocketOS-debug.apk
+          adb install -r dist/PocketOS-androidTest.apk
+          timeout --kill-after=10s 300s adb shell am instrument -w -r com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner > instrumentation-api36.txt 2>&1
+          cat instrumentation-api36.txt
+          python3 - <<'PY'
+          import pathlib, re
+          output = pathlib.Path("instrumentation-api36.txt").read_text()
+          assert re.search(r"OK \(\d+ tests?\)", output), "Instrumentation did not report success"
+          assert not re.search(r"FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed", output), "Instrumentation failed"
+          assert len(re.findall(r"INSTRUMENTATION_STATUS_CODE: -(?:3|4)\b", output)) == 3, "Expected only the three ARM64-specific skips on x86_64"
+          PY
+      - name: Collect Android 16 diagnostics
+        if: always()
+        run: |
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          timeout 10s "$sdk_root/platform-tools/adb" logcat -d -s PocketOSRuntimeTest:I AndroidRuntime:E > logcat-api36.txt 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocketos-android16-results-${{ github.event.pull_request.head.sha || github.sha }}${{ github.event_name == 'pull_request' && '-pull-request' || '' }}
+          path: |
+            instrumentation-api36.txt
+            emulator-api36.log
+            logcat-api36.txt
+          if-no-files-found: warn
           retention-days: 14
 
   guest-boot:
