@@ -19,10 +19,12 @@ class RuntimeValidationActivity : Activity() {
     override fun onResume() {
         super.onResume()
         resumed = true
+        android.util.Log.i("PocketOSRuntimeTest", "validation activity resumed")
     }
 
     override fun onPause() {
         resumed = false
+        android.util.Log.i("PocketOSRuntimeTest", "validation activity paused")
         super.onPause()
     }
 

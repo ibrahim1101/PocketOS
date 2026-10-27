@@ -11,6 +11,7 @@ $Commit = ""
 $Failed = [System.Collections.Generic.List[string]]::new()
 $Results = [System.Collections.Generic.List[object]]::new()
 $TestMayBeRunning = $false
+$ExistingJournals = @()
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $ArtifactDirectory = Join-Path $OutputDirectory "artifacts"
 New-Item -ItemType Directory -Force -Path $ArtifactDirectory | Out-Null
@@ -189,6 +190,15 @@ try {
     @{ Name = "alpine-guest-workflow"; Class = "bootsFreshAlpineSetsPasswordLogsInPersistsAndPowersOffGuest"; Timeout = 300 }
   )
   foreach ($test in $tests) {
+    # Snapshot journal names before this run so a preflight failure cannot export
+    # older boot logs as if they belonged to the current candidate.
+    $baseline = Invoke-Adb @("-s", $Serial, "shell", "run-as", "com.pocketos.app", "sh", "-c",
+      'if [ -d files/diagnostics ]; then ls files/diagnostics; fi') 5
+    if ($baseline.ExitCode -ne 0) { throw "Could not establish the diagnostic journal baseline before testing." }
+    $ExistingJournals = @($baseline.Output -split '\r?\n' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    Write-Host 'Unlock the Vivo now and keep the PocketOS validation screen visible. The test waits up to 30 seconds for normal unlocking.'
+    $wake = Invoke-Adb @("-s", $Serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP") 5
+    if ($wake.ExitCode -ne 0) { throw "Could not wake the display before validation. No guest was launched." }
     $hostProgress = [System.Text.StringBuilder]::new()
     $hostHeartbeat = {
       # This ADB request runs independently of the app's Java timers. run-as scopes
@@ -209,7 +219,13 @@ try {
       $Failed.Add($test.Name)
       # Capture Android scheduling/freezer state before force-stop destroys it.
       $activityState = Invoke-Adb @("-s", $Serial, "shell", "dumpsys", "activity", "processes", "com.pocketos.app") 3
-      Save-Text "android-process-scheduling.txt" $activityState.Output | Out-Null
+      # Some OEMs include global phantom-process lists despite the package filter.
+      $processSummary = ($activityState.Output -split '\r?\n' | Where-Object {
+        $_ -match 'com\.pocketos\.app' -or
+        $_ -match '^\s*(mCurRawAdj|mSetRawAdj|mCurAdj|mSetAdj|mCurProcState|mSetProcState|curSchedGroup|setSchedGroup|isFrozen|mFrozen|hasForegroundActivities|hasActiveInstrumentation)\s*='
+      }) -join [Environment]::NewLine
+      if (-not $processSummary) { $processSummary = 'No PocketOS scheduling record was present after the test ended.' }
+      Save-Text "android-process-scheduling.txt" $processSummary | Out-Null
       $powerState = Invoke-Adb @("-s", $Serial, "shell", "dumpsys", "power") 3
       $powerSummary = ($powerState.Output -split '\r?\n' | Where-Object { $_ -match 'mWakefulness=|mIsPowered=|mDisplayReady=|mWakeLockSummary=|mUserActivitySummary=|PocketOS' }) -join [Environment]::NewLine
       Save-Text "android-power-state.txt" $powerSummary | Out-Null
@@ -232,7 +248,9 @@ try {
 
   $latest = Invoke-Adb @("-s", $Serial, "shell", "run-as", "com.pocketos.app", "ls", "-t", "files/diagnostics") 30
   if ($latest.ExitCode -eq 0) {
-    foreach ($journal in ($latest.Output -split '\r?\n' | Where-Object { $_ -match '^arm64-guest-.*\.log(?:\.previous)?$' } | Select-Object -First 4)) {
+    $newJournals = @($latest.Output -split '\r?\n' | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^arm64-guest-.*\.log(?:\.previous)?$' -and $ExistingJournals -notcontains $_ } | Select-Object -First 4)
+    Save-Text "journal-collection.txt" "new-journals=$($newJournals.Count); only journals created by this test are included" | Out-Null
+    foreach ($journal in $newJournals) {
       $journalData = Invoke-Adb @("-s", $Serial, "exec-out", "run-as", "com.pocketos.app", "cat", "files/diagnostics/$journal") 30
       if ($journalData.ExitCode -eq 0) { Save-Text $journal $journalData.Output | Out-Null }
     }

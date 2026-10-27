@@ -2,6 +2,8 @@ package com.pocketos.app
 
 import android.content.Context
 import android.content.Intent
+import android.app.KeyguardManager
+import android.os.PowerManager
 import android.os.Bundle
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -44,12 +46,29 @@ class QemuAndroidRuntimeInstrumentationTest {
 
         override fun before() {
             val instrumentation = InstrumentationRegistry.getInstrumentation()
-            activity = instrumentation.startActivitySync(
-                Intent(instrumentation.targetContext, RuntimeValidationActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            ) as RuntimeValidationActivity
-            instrumentation.waitForIdleSync()
-            assertTrue("Runtime validation activity did not resume; unlock the device", RuntimeValidationActivity.resumed)
+            val context = instrumentation.targetContext
+            val power = context.getSystemService(PowerManager::class.java)
+            val keyguard = context.getSystemService(KeyguardManager::class.java)
+            fun deviceState() = "interactive=${power.isInteractive} keyguardLocked=${keyguard.isKeyguardLocked}"
+            Log.i(TAG, "preflight waiting for awake/unlocked device ${deviceState()}")
+            try {
+                awaitValidationCondition("Unlock the device before guest validation", 30_000, ::deviceState) {
+                    power.isInteractive && !keyguard.isKeyguardLocked
+                }
+                activity = instrumentation.startActivitySync(
+                    Intent(context, RuntimeValidationActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                ) as RuntimeValidationActivity
+                awaitValidationCondition("Waiting for validation activity to resume", 5_000, ::deviceState) {
+                    RuntimeValidationActivity.resumed && power.isInteractive && !keyguard.isKeyguardLocked
+                }
+                Log.i(TAG, "preflight complete ${deviceState()}")
+            } catch (failure: Throwable) {
+                // ExternalResource.after is not called when before throws.
+                val launched = activity
+                activity = null
+                if (launched != null) android.os.Handler(android.os.Looper.getMainLooper()).post { launched.finish() }
+                throw failure
+            }
         }
 
         override fun after() {
@@ -61,6 +80,35 @@ class QemuAndroidRuntimeInstrumentationTest {
     @Test
     fun validationRunsWithVisibleTargetActivity() {
         assertTrue("Target process has no resumed validation activity", RuntimeValidationActivity.resumed)
+    }
+
+    @Test(timeout = 3000)
+    fun validationPreflightWaitsForDelayedLifecycleReadiness() {
+        val ready = CountDownLatch(1)
+        Thread { Thread.sleep(100); ready.countDown() }.apply { isDaemon = true; start() }
+        awaitValidationCondition("delayed readiness regression", 1000) { ready.count == 0L }
+    }
+
+    @Test(timeout = 3000)
+    fun validationPreflightRejectsUnreadyDeviceWithinItsDeadline() {
+        val failure = runCatching {
+            awaitValidationCondition("locked device regression", 100, { "interactive=false keyguardLocked=true" }) { false }
+        }.exceptionOrNull()
+        assertTrue(failure is AssertionError)
+        assertTrue(failure!!.message.orEmpty().contains("keyguardLocked=true"))
+    }
+
+    private fun awaitValidationCondition(
+        stage: String,
+        timeoutMs: Long,
+        detail: () -> String = { "" },
+        ready: () -> Boolean,
+    ) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        while (!ready()) {
+            if (System.nanoTime() >= deadline) throw AssertionError("$stage exceeded ${timeoutMs}ms; ${detail()}")
+            Thread.sleep(25)
+        }
     }
 
     @Test
