@@ -247,12 +247,18 @@ jobs:
           set -euo pipefail
           sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           export PATH="$sdk_root/platform-tools:$sdk_root/emulator:$PATH"
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
           sudo chmod 666 /dev/kvm
           echo "no" | "$sdk_root/cmdline-tools/latest/bin/avdmanager" create avd -n pocketos-api36 -k "system-images;android-36;google_apis;x86_64" --device pixel_2 --force
+          "$sdk_root/emulator/emulator" -list-avds | grep -Fx pocketos-api36
           "$sdk_root/emulator/emulator" -avd pocketos-api36 -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -accel on > emulator-api36.log 2>&1 &
           emulator_pid=$!
           trap 'timeout 10s adb logcat -d -s PocketOSRuntimeTest:I AndroidRuntime:E > logcat-api36.txt 2>&1 || true; timeout 5s adb shell am force-stop com.pocketos.app >/dev/null 2>&1 || true; kill "$emulator_pid" 2>/dev/null || true' EXIT
-          timeout 120s adb wait-for-device
+          if ! timeout 120s adb wait-for-device; then
+            cat emulator-api36.log
+            exit 1
+          fi
           booted=false
           for attempt in $(seq 1 120); do
             if [[ "$(timeout 5s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
@@ -279,7 +285,9 @@ jobs:
         if: always()
         run: |
           sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          timeout 10s "$sdk_root/platform-tools/adb" logcat -d -s PocketOSRuntimeTest:I AndroidRuntime:E > logcat-api36.txt 2>&1 || true
+          if [[ ! -s logcat-api36.txt ]]; then
+            timeout 10s "$sdk_root/platform-tools/adb" logcat -d -s PocketOSRuntimeTest:I AndroidRuntime:E > logcat-api36.txt 2>&1 || true
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
