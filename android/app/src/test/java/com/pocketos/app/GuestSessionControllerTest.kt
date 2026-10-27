@@ -10,6 +10,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GuestSessionControllerTest {
+    @Test
+    fun restartedProcessMustReachItsOwnPromptBeforeBecomingRunning() {
+        val rig = Rig()
+        assertTrue(rig.controller.start { rig.preparedGuest() })
+        rig.launcher.emitSerial("pocketos login: ")
+        assertEquals(VmState.RUNNING, rig.controller.state)
+        val previousSerial = rig.launcher.serialReceiver()
+        val previousDeadline = rig.scheduler.tasks.single()
+        assertTrue(rig.controller.stopByUser())
+        assertTrue(rig.controller.start { rig.preparedGuest().copy(diskLease = FakeLease()) })
+        try {
+            rig.launcher.emitSerial("Booting Linux\r\n")
+            assertEquals(VmState.BOOTING, rig.controller.state)
+            previousSerial("pocketos login: ".toByteArray())
+            assertEquals("Old reader marked replacement guest ready", VmState.BOOTING, rig.controller.state)
+            assertFalse(rig.controller.writeSerial("premature-input\n".toByteArray()))
+            rig.launcher.emitSerial("pocketos login: ")
+            assertEquals(VmState.RUNNING, rig.controller.state)
+            previousDeadline.runEvenIfCancelled()
+            assertEquals("Old deadline stopped replacement guest", VmState.RUNNING, rig.controller.state)
+            assertTrue(rig.launcher.process!!.isAlive)
+        } finally { rig.controller.stopByUser() }
+    }
+
     @Test(timeout = 5000)
     fun lateTerminalFailureCannotStopReplacementGuest() {
         val failureHandled = CountDownLatch(1)
@@ -290,6 +314,7 @@ class GuestSessionControllerTest {
         }
 
         fun emitSerial(output: String) = serial(output.toByteArray())
+        fun serialReceiver(): (ByteArray) -> Unit = serial
     }
 
     private class FakeProcess : GuestProcess {
@@ -344,6 +369,7 @@ class GuestSessionControllerTest {
     private class FakeTask(val delayMs: Long, private val task: () -> Unit) : ScheduledSessionTask {
         private var cancelled = false
         fun run() { if (!cancelled) task() }
+        fun runEvenIfCancelled() { task() }
         override fun cancel() { cancelled = true }
     }
 

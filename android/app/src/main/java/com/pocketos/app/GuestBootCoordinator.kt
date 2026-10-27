@@ -23,7 +23,12 @@ class GuestBootCoordinator(
 
     fun clearSession() = sessionProtection.clear()
 
-    fun beginPreparation(): Boolean = lifecycle.transitionTo(VmState.PREPARING)
+    @Synchronized
+    fun beginPreparation(): Boolean {
+        if (!lifecycle.transitionTo(VmState.PREPARING)) return false
+        readinessProbe.reset()
+        return true
+    }
 
     fun onPreparationComplete(): Boolean = lifecycle.transitionTo(VmState.STARTING)
 
@@ -81,3 +86,4 @@ class GuestBootCoordinator(
         }
     }
 }
+

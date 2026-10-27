@@ -8,11 +8,17 @@ class GuestReadinessProbe(
     private val maxRetainedCharacters: Int = 4096,
 ) {
     private val serialTail = StringBuilder()
-    var isReady: Boolean = false
+    @Volatile var isReady: Boolean = false
         private set
 
     init {
         require(maxRetainedCharacters >= MIN_PROMPT_LENGTH)
+    }
+
+    @Synchronized
+    fun reset() {
+        serialTail.setLength(0)
+        isReady = false
     }
 
     @Synchronized
@@ -34,3 +40,4 @@ class GuestReadinessProbe(
         private val LOGIN_PROMPT = Regex("(?im)(?:^|[\\r\\n])(?:(?!Last\\b)[A-Za-z0-9_.-]+\\s+)?login:\\s*$")
     }
 }
+

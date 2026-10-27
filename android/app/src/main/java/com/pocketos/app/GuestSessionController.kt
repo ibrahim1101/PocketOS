@@ -70,6 +70,7 @@ class GuestSessionController(
     private var deadlineTask: ScheduledSessionTask? = null
     private var bootWatchdog: IndependentWatchdog? = null
     private var launching = false
+    @Volatile private var activeGeneration: Any? = null
     private val pendingSerial = mutableListOf<ByteArray>()
 
     @Volatile
@@ -104,15 +105,19 @@ class GuestSessionController(
             check(coordinator.onProcessStarted()) { "Guest process transition failed" }
 
             launching = true
+            val generation = Any()
+            activeGeneration = generation
             val startedProcess = processLauncher.start(
                 command = prepared.command,
                 workingDirectory = prepared.workingDirectory,
-                onSerialOutput = ::receiveSerialOutput,
-                onDiagnosticOutput = { bytes -> runCatching { onDiagnosticOutput(bytes) } },
+                onSerialOutput = { bytes -> receiveSerialOutput(generation, bytes) },
+                onDiagnosticOutput = { bytes ->
+                    if (activeGeneration === generation) runCatching { onDiagnosticOutput(bytes) }
+                },
             )
             process = startedProcess
             bootWatchdog = IndependentWatchdog(bootTimeoutMs) {
-                stop(GuestStopReason.BOOT_TIMEOUT, onlyWhileBooting = true)
+                stop(GuestStopReason.BOOT_TIMEOUT, onlyWhileBooting = true, expectedProcess = startedProcess)
             }
             launching = false
 
@@ -153,8 +158,8 @@ class GuestSessionController(
             // Keep the Android service worker available for battery/user/deadline events.
             // The identity check prevents a late failure from stopping a replacement guest.
             Thread({
-                val stopped = stop(GuestStopReason.TERMINAL_IO_FAILURE, expectedProcess = current)
-                runCatching { onDiagnosticOutput("Terminal I/O failed; matching guest stopped=$stopped.\n".toByteArray()) }
+                val accepted = runCatching { stop(GuestStopReason.TERMINAL_IO_FAILURE, expectedProcess = current) }.getOrDefault(false)
+                runCatching { onDiagnosticOutput("Terminal I/O failed; matching guest stop accepted=$accepted.\n".toByteArray()) }
             }, "pocketos-terminal-failure")
                 .apply { isDaemon = true; start() }
             if (failure is InterruptedException) Thread.currentThread().interrupt()
@@ -237,10 +242,11 @@ class GuestSessionController(
         return true
     }
 
-    private fun receiveSerialOutput(bytes: ByteArray) {
-        if (bytes.isEmpty()) return
+    private fun receiveSerialOutput(generation: Any, bytes: ByteArray) {
+        if (bytes.isEmpty() || activeGeneration !== generation) return
         runCatching { onSerialOutput(bytes.copyOf()) }
         synchronized(lock) {
+            if (activeGeneration !== generation) return
             if (launching && process == null) {
                 pendingSerial += bytes.copyOf()
                 return
@@ -260,8 +266,11 @@ class GuestSessionController(
                     process?.forceStop(forceStopTimeoutMs, TimeUnit.MILLISECONDS)
                     return
                 }
+                val readyProcess = process
                 deadlineTask = try {
-                    scheduler.schedule(remaining) { stop(GuestStopReason.TIME_LIMIT) }
+                    scheduler.schedule(remaining) {
+                        if (readyProcess != null) stop(GuestStopReason.TIME_LIMIT, expectedProcess = readyProcess)
+                    }
                 } catch (_: Exception) {
                     lastStopReason = GuestStopReason.START_FAILURE
                     process?.forceStop(forceStopTimeoutMs, TimeUnit.MILLISECONDS)
@@ -305,6 +314,7 @@ class GuestSessionController(
                 coordinator.onProcessExited()
             }
             process = null
+            activeGeneration = null
             releaseGuestLocked()
             publishState()
         }
@@ -312,6 +322,7 @@ class GuestSessionController(
 
     private fun failStartLocked() {
         launching = false
+        activeGeneration = null
         pendingSerial.clear()
         bootWatchdog?.close()
         bootWatchdog = null

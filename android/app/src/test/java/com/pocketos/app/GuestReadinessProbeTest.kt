@@ -6,6 +6,19 @@ import org.junit.Test
 
 class GuestReadinessProbeTest {
     @Test
+    fun resetDropsReadinessAndPartialPromptFromPreviousProcess() {
+        val probe = GuestReadinessProbe()
+        assertFalse(probe.onSerialOutput("localhost log".toByteArray()))
+        probe.reset()
+        assertFalse(probe.onSerialOutput("in: ".toByteArray()))
+        assertTrue(probe.onSerialOutput("\r\nlogin: ".toByteArray()))
+        probe.reset()
+        assertFalse(probe.isReady)
+        assertFalse(probe.onSerialOutput("Booting Linux\r\n".toByteArray()))
+        assertTrue(probe.onSerialOutput("New password: ".toByteArray()))
+    }
+
+    @Test
     fun waitsForCompleteLoginPromptAcrossSerialChunks() {
         val probe = GuestReadinessProbe()
         val lineBreak = 13.toChar().toString() + 10.toChar()
@@ -49,3 +62,4 @@ class GuestReadinessProbeTest {
         assertFalse(probe.onSerialOutput("Last login:".toByteArray()))
     }
 }
+
