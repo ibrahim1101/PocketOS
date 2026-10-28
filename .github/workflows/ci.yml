@@ -189,6 +189,11 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "${env:ANDROID_HOME}/platform-tools" + [IO.Path]::PathSeparator + $env:PATH
+          # Gradle removes its test packages at the end of connected tests.
+          foreach ($apk in @('dist/PocketOS-debug.apk', 'dist/PocketOS-androidTest.apk')) {
+            & adb -s emulator-5554 install -r $apk
+            if ($LASTEXITCODE -ne 0) { throw "Could not install $apk for the handoff regression" }
+          }
           ./scripts/test-vivo-adb.ps1 -Serial emulator-5554
       - name: Upload Android app APK
         if: success()
