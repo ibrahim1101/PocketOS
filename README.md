@@ -1,32 +1,26 @@
 # PocketOS
 
-Rootless, on-demand CLI Linux server sandbox for Android.
+Rootless Alpine Linux ARM64 guest running under Android ARM64 QEMU, with a persistent ext4 disk and a foreground-service control plane.
 
-## Status
+## Current status
 
-**Early development scaffold.** The Android app and widget are implemented as a control-plane prototype. **No QEMU guest is launched yet.** The engine is explicitly a stub; the UI must not claim a guest has booted.
+The Android app, ARM64 QEMU packaging, guest image, serial login flow, storage tools, networking controls, and CI validation are implemented. CI builds both APKs and verifies Alpine boot, first-run account setup, same-disk persistence, SQLite, and localhost HTTP workloads.
 
-## Goals
+**Physical ARM64 Android validation is still pending.** The guest runtime gate remains closed until the consolidated QEMU and Alpine boot test passes on a Vivo I2501. Host QEMU and the x86_64 Android emulator do not establish physical ARM64 guest success.
 
-- Android ARM64, no device root
-- Independent Alpine Linux ARM64 kernel in QEMU (future integration)
-- Serial-only console; persistent guest disk
-- Localhost-only forwarding by default, opt-in LAN
-- Widget start/stop, 60-minute session cap, 20% battery cutoff
-- Wi-Fi disconnect does not trigger shutdown
+## Features
 
-## Build
+- Runs without Android root using packaged ARM64 QEMU and an Alpine ARM64 guest.
+- Creates the `pocketos` guest account during first login; no preset Linux password is shipped.
+- Persists guest files on a private ext4 disk, with storage reporting, backup export/import, disk growth, and boot-time filesystem expansion.
+- Provides a serial terminal, home-screen widget, foreground-service lifecycle, 60-minute session limit, and 20% battery cutoff.
+- Forwards guest HTTP to Android localhost by default. Wi-Fi LAN exposure requires explicit opt-in.
+- Keeps Android guest startup fail-closed until physical ARM64 runtime validation succeeds.
 
-Open `android/` in Android Studio (JDK 17, Android SDK 35). Gradle wrapper is not committed in this starter: generate it with `gradle wrapper --gradle-version 8.9` using an installed Gradle, then `./gradlew assembleDebug`, or let Android Studio sync with its Gradle installation. The current app uses no external UI dependencies.
+## Build and test
 
-## Implementation state
+Use JDK 17, Android SDK 35, NDK 27.2.12479018, and Gradle 8.9 for the repository's CI configuration. The Gradle wrapper is not committed. Build and test commands are documented in [Android QEMU integration](docs/ANDROID_QEMU_INTEGRATION.md).
 
-- [x] Android manifest, activity, widget, control-plane service source
-- [x] Policy model and unit tests
-- [x] Host-side minimal guest boot experiment script
-- [ ] Build/verify Android APK on a device
-- [ ] Integrate QEMU as an Android native executable
-- [ ] Boot real Alpine guest and expose serial console
-- [ ] Graceful guest shutdown, real networking and persistence
+For a Vivo device test, follow [Physical Android testing](docs/PHYSICAL_ANDROID_TESTING.md). Use both APKs from the same successful trusted push workflow run; the handoff script verifies their hashes and signing certificate before installation.
 
-See `docs/ARCHITECTURE.md` and `docs/ROADMAP.md`.
+See [Development status](docs/DEVELOPMENT_STATUS.md), [Architecture](docs/ARCHITECTURE.md), and [Roadmap](docs/ROADMAP.md) for implementation details and remaining validation.
