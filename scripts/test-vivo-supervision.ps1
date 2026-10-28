@@ -12,7 +12,8 @@ foreach ($name in @('ConvertTo-CommandLineArgument', 'Invoke-Bounded')) {
   if (-not $function) { throw "Missing function $name" }
   . ([scriptblock]::Create($function.Extent.Text))
 }
-$exe = (Get-Process -Id $PID).Path
+$exeName = if ($PSVersionTable.PSVersion.Major -lt 6) { 'powershell.exe' } elseif ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { 'pwsh.exe' } else { 'pwsh' }
+$exe = Join-Path $PSHOME $exeName
 $normal = Invoke-Bounded $exe @('-NoProfile', '-NonInteractive', '-Command', 'Write-Output child-ready') 15
 if ($normal.TimedOut -or $normal.ExitCode -ne 0 -or $normal.Output -notmatch 'child-ready') {
   throw 'Normal child output or exit handling failed'

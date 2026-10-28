@@ -185,6 +185,11 @@ jobs:
             "$sdk_root/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
       - name: Run Android native bridge instrumentation tests
         run: gradle -p android connectedDebugAndroidTest
+      - name: Exercise Windows handoff commands against real Android ADB
+        shell: pwsh
+        run: |
+          $env:PATH = "${env:ANDROID_HOME}/platform-tools" + [IO.Path]::PathSeparator + $env:PATH
+          ./scripts/test-vivo-adb.ps1 -Serial emulator-5554
       - name: Upload Android app APK
         if: success()
         uses: actions/upload-artifact@v4
@@ -222,6 +227,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -272,6 +280,7 @@ jobs:
           adb shell input keyevent KEYCODE_WAKEUP
           adb install -r dist/PocketOS-debug.apk
           adb install -r dist/PocketOS-androidTest.apk
+          pwsh -NoProfile -NonInteractive -File scripts/test-vivo-adb.ps1 -Serial emulator-5554
           timeout --kill-after=10s 300s adb shell am instrument -w -r com.pocketos.app.test/androidx.test.runner.AndroidJUnitRunner > instrumentation-api36.txt 2>&1
           cat instrumentation-api36.txt
           python3 - <<'PY'
@@ -298,6 +307,27 @@ jobs:
             logcat-api36.txt
           if-no-files-found: warn
           retention-days: 14
+
+  windows-handoff:
+    name: Windows PowerShell handoff regression tests
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Test native Windows argument handling, sanitization, and supervision
+        shell: pwsh
+        run: |
+          ./scripts/test-vivo-adb.ps1
+          ./scripts/test-vivo-sanitizer.ps1
+          ./scripts/test-vivo-supervision.ps1
+      - name: Test Windows PowerShell 5.1 compatibility
+        shell: powershell
+        run: |
+          ./scripts/test-vivo-adb.ps1
+          ./scripts/test-vivo-sanitizer.ps1
+          ./scripts/test-vivo-supervision.ps1
 
   guest-boot:
     name: Alpine ARM64 guest build and boot
@@ -334,6 +364,7 @@ jobs:
         run: |
           ./scripts/test-vivo-sanitizer.ps1
           ./scripts/test-vivo-supervision.ps1
+          ./scripts/test-vivo-adb.ps1
       - name: Fetch and verify pinned Android QEMU source
         run: |
           bash scripts/fetch-android-qemu-source.sh "$RUNNER_TEMP/qemu-11.1.2"

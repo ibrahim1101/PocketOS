@@ -83,6 +83,22 @@ function Invoke-Adb([string[]]$Arguments, [int]$TimeoutSeconds = 90, [scriptbloc
   return Invoke-Bounded $script:Adb $Arguments $TimeoutSeconds $OnHeartbeat
 }
 
+# ADB joins remote arguments into a command parsed by Android's outer shell.
+# Windows argv quoting alone does not preserve the inner sh -c script.
+function ConvertTo-AndroidShellArgument([string]$Value) {
+  return "'" + $Value.Replace("'", "'\''") + "'"
+}
+
+function Invoke-AppShell([string]$DeviceSerial, [string]$Script, [int]$TimeoutSeconds = 5) {
+  $remote = "run-as com.pocketos.app sh -c " + (ConvertTo-AndroidShellArgument $Script)
+  return Invoke-Adb @("-s", $DeviceSerial, "shell", $remote) $TimeoutSeconds
+}
+
+function Get-AppJournalBaseline([string]$DeviceSerial, [string]$Directory = 'files/diagnostics') {
+  $path = ConvertTo-AndroidShellArgument $Directory
+  return Invoke-AppShell $DeviceSerial "if [ -d $path ]; then ls -1 $path; fi" 5
+}
+
 function Stop-DeviceTestProcesses([string]$DeviceSerial) {
   $actions = [System.Collections.Generic.List[string]]::new()
   foreach ($package in @("com.pocketos.app.test", "com.pocketos.app")) {
@@ -91,10 +107,7 @@ function Stop-DeviceTestProcesses([string]$DeviceSerial) {
   }
   # run-as limits this signal to PocketOS's UID, so a host timeout can clear a
   # native child even if force-stopping the app package did not reap it.
-  $kill = Invoke-Adb @(
-    "-s", $DeviceSerial, "shell", "run-as", "com.pocketos.app", "sh", "-c",
-    'for pid in $(pidof libqemu-system-aarch64.so 2>/dev/null); do kill -KILL "$pid" 2>/dev/null || true; done'
-  ) 20
+  $kill = Invoke-AppShell $DeviceSerial 'for pid in $(pidof libqemu-system-aarch64.so 2>/dev/null); do kill -KILL "$pid" 2>/dev/null || true; done' 20
   $actions.Add("qemu-child-cleanup exit=$($kill.ExitCode) timedOut=$($kill.TimedOut)")
   $state = Invoke-Adb @("-s", $DeviceSerial, "shell", "ps", "-A") 20
   $remaining = @($state.Output -split '\r?\n' | Where-Object { $_ -match 'libqemu-system-aarch64\.so' })
@@ -192,9 +205,11 @@ try {
   foreach ($test in $tests) {
     # Snapshot journal names before this run so a preflight failure cannot export
     # older boot logs as if they belonged to the current candidate.
-    $baseline = Invoke-Adb @("-s", $Serial, "shell", "run-as", "com.pocketos.app", "sh", "-c",
-      'if [ -d files/diagnostics ]; then ls files/diagnostics; fi') 5
-    if ($baseline.ExitCode -ne 0) { throw "Could not establish the diagnostic journal baseline before testing." }
+    $baseline = Get-AppJournalBaseline $Serial
+    Save-Text "journal-baseline.txt" "exit=$($baseline.ExitCode) timedOut=$($baseline.TimedOut)`n$($baseline.Output)" | Out-Null
+    if ($baseline.ExitCode -ne 0) {
+      throw "Could not establish the diagnostic journal baseline before testing (exit=$($baseline.ExitCode), timedOut=$($baseline.TimedOut)); see journal-baseline.txt for the sanitized ADB error."
+    }
     $ExistingJournals = @($baseline.Output -split '\r?\n' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     Write-Host 'Unlock the Vivo now and keep the PocketOS validation screen visible. The test waits up to 30 seconds for normal unlocking.'
     $wake = Invoke-Adb @("-s", $Serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP") 5
@@ -203,8 +218,7 @@ try {
     $hostHeartbeat = {
       # This ADB request runs independently of the app's Java timers. run-as scopes
       # procfs access to the target app; no global freezer or battery setting changes.
-      $probe = Invoke-Adb @("-s", $Serial, "shell", "run-as", "com.pocketos.app", "sh", "-c",
-        'for p in $(pidof com.pocketos.app libqemu-system-aarch64.so 2>/dev/null); do echo PROCESS=$p; cat /proc/$p/stat /proc/$p/cgroup 2>/dev/null; done') 3
+      $probe = Invoke-AppShell $Serial 'for p in $(pidof com.pocketos.app libqemu-system-aarch64.so 2>/dev/null); do echo PROCESS=$p; cat /proc/$p/stat /proc/$p/cgroup 2>/dev/null; done' 3
       [void]$hostProgress.AppendLine("utc=$([DateTime]::UtcNow.ToString('o')) exit=$($probe.ExitCode) timeout=$($probe.TimedOut)")
       [void]$hostProgress.AppendLine($probe.Output)
       if ($hostProgress.Length -gt 65536) { [void]$hostProgress.Remove(0, $hostProgress.Length - 65536) }
