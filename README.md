@@ -1,32 +1,19 @@
 # PocketOS
 
-Rootless, on-demand CLI Linux server sandbox for Android.
+A rootless, on-demand CLI Linux sandbox project for Android.
 
-## Status
+## Branch and validation status
 
-**Early development scaffold.** The Android app and widget are implemented as a control-plane prototype. **No QEMU guest is launched yet.** The engine is explicitly a stub; the UI must not claim a guest has booted.
+The default branch is an earlier snapshot. Current development is on [`feat/m1-linux-boot`](https://github.com/ibrahim1101/PocketOS/tree/feat/m1-linux-boot). Updating this README does not merge that implementation into `main`.
 
-## Goals
+The development branch contains Android ARM64 QEMU packaging, Alpine guest assets, a serial console and lifecycle/storage controls. Physical ARM64 guest boot, login, clean shutdown and persistence still require device acceptance; host/emulator CI does not prove success on Vivo hardware.
 
-- Android ARM64, no device root
-- Independent Alpine Linux ARM64 kernel in QEMU (future integration)
-- Serial-only console; persistent guest disk
-- Localhost-only forwarding by default, opt-in LAN
-- Widget start/stop, 60-minute session cap, 20% battery cutoff
-- Wi-Fi disconnect does not trigger shutdown
+- [Development README](https://github.com/ibrahim1101/PocketOS/blob/feat/m1-linux-boot/README.md)
+- [Development status](https://github.com/ibrahim1101/PocketOS/blob/feat/m1-linux-boot/docs/DEVELOPMENT_STATUS.md)
+- [Physical testing](https://github.com/ibrahim1101/PocketOS/blob/feat/m1-linux-boot/docs/PHYSICAL_ANDROID_TESTING.md)
 
-## Build
+Review CI evidence at its exact commit. Source presence, hosted tests, physical-device acceptance and production readiness are separate evidence levels. No fresh runtime, deployment or installer acceptance was performed for this documentation update.
 
-Open `android/` in Android Studio (JDK 17, Android SDK 35). Gradle wrapper is not committed in this starter: generate it with `gradle wrapper --gradle-version 8.9` using an installed Gradle, then `./gradlew assembleDebug`, or let Android Studio sync with its Gradle installation. The current app uses no external UI dependencies.
+## This branch
 
-## Implementation state
-
-- [x] Android manifest, activity, widget, control-plane service source
-- [x] Policy model and unit tests
-- [x] Host-side minimal guest boot experiment script
-- [ ] Build/verify Android APK on a device
-- [ ] Integrate QEMU as an Android native executable
-- [ ] Boot real Alpine guest and expose serial console
-- [ ] Graceful guest shutdown, real networking and persistence
-
-See `docs/ARCHITECTURE.md` and `docs/ROADMAP.md`.
+The source in `main` is the early control-plane scaffold and stub engine. Goals include a 60-minute limit, a 20% battery cutoff and no Wi-Fi-disconnect shutdown. Do not interpret the development feature list as working QEMU support in this branch. Use the selected branch's own build instructions; toolchain requirements differ.
